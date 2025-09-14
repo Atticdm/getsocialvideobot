@@ -1,16 +1,13 @@
 FROM node:20-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies (use apt for yt-dlp to avoid PEP 668)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     python3 \
-    python3-pip \
     ffmpeg \
+    yt-dlp \
     && rm -rf /var/lib/apt/lists/*
-
-# Install yt-dlp
-RUN pip3 install yt-dlp
 
 # Create app directory
 WORKDIR /app
