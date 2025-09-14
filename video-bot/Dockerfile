@@ -25,12 +25,9 @@ COPY . .
 # Build the application
 RUN npm run build
 
-# Create logs directory
-RUN mkdir -p logs
-
-# Create non-root user
-RUN useradd -m -u 1000 botuser && chown -R botuser:botuser /app
-USER botuser
+# Create logs directory and set ownership to built-in 'node' user
+RUN mkdir -p logs && chown -R node:node /app
+USER node
 
 # Expose port (if needed for health checks)
 EXPOSE 3000
