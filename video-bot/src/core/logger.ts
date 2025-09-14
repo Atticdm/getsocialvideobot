@@ -8,7 +8,7 @@ const logsDir = path.join(process.cwd(), 'logs');
 fs.ensureDirSync(logsDir);
 
 const isDevelopment = config.NODE_ENV === 'development';
-const logToFiles = process.env.LOG_TO_FILES === 'true';
+const logToFiles = process.env['LOG_TO_FILES'] === 'true';
 
 const loggerConfig: pino.LoggerOptions = {
   level: config.LOG_LEVEL,

@@ -5,16 +5,31 @@ import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
 import { FacebookVideoInfo, DownloadResult } from './types';
 
+function normalizeFacebookUrl(originalUrl: string): string {
+  try {
+    const m = originalUrl.match(/facebook\.com\/reel\/(\d+)/);
+    if (m && m[1]) {
+      return `https://m.facebook.com/watch/?v=${m[1]}`;
+    }
+  } catch {}
+  return originalUrl;
+}
+
 export async function downloadFacebookVideo(url: string, outDir: string): Promise<DownloadResult> {
-  logger.info('Starting Facebook video download', { url, outDir });
+  const normalizedUrl = normalizeFacebookUrl(url);
+  logger.info('Starting Facebook video download', { url, normalizedUrl, outDir });
 
   // Build yt-dlp command arguments
   const args = [
     '--no-playlist',
+    '--geo-bypass',
+    '-4',
+    '--add-header', 'Referer:https://www.facebook.com/',
+    '--user-agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     // Prefer MP4 if available, fall back to best
     '-f', 'best[ext=mp4]/best',
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
-    url
+    normalizedUrl
   ];
 
   try {
@@ -47,7 +62,7 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
     }
     
     // Parse video info from filename
-    const videoInfo = parseVideoInfoFromPath(filePath, url);
+    const videoInfo = parseVideoInfoFromPath(filePath, normalizedUrl);
 
     logger.info('Facebook video downloaded successfully', { 
       url, 
