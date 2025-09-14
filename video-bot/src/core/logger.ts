@@ -11,9 +11,6 @@ const isDevelopment = config.NODE_ENV === 'development';
 
 const loggerConfig: pino.LoggerOptions = {
   level: config.LOG_LEVEL,
-  formatters: {
-    level: (label) => ({ level: label }),
-  },
 };
 
 if (isDevelopment) {
