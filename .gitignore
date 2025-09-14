@@ -1,0 +1,9 @@
+# OS
+.DS_Store
+
+# Logs and PIDs
+logs/
+*.log
+*.pid
+
+# Node projects inside subfolders keep their own .gitignore
