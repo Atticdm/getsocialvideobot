@@ -5,12 +5,20 @@ import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
 import { FacebookVideoInfo, DownloadResult } from './types';
 
+function extractIdFromUrl(originalUrl: string): string | null {
+  try {
+    const m1 = originalUrl.match(/facebook\.com\/reel\/(\d+)/);
+    if (m1 && m1[1]) return m1[1];
+    const m2 = originalUrl.match(/[?&]v=(\d+)/);
+    if (m2 && m2[1]) return m2[1];
+  } catch {}
+  return null;
+}
+
 function normalizeFacebookUrl(originalUrl: string): string {
   try {
-    const m = originalUrl.match(/facebook\.com\/reel\/(\d+)/);
-    if (m && m[1]) {
-      return `https://m.facebook.com/watch/?v=${m[1]}`;
-    }
+    const id = extractIdFromUrl(originalUrl);
+    if (id) return `https://m.facebook.com/watch/?v=${id}`;
   } catch {}
   return originalUrl;
 }
@@ -33,7 +41,25 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
   ];
 
   try {
-    const result = await run('yt-dlp', args, { timeout: 300000 }); // 5 minutes timeout
+    let result = await run('yt-dlp', args, { timeout: 300000 }); // 5 minutes timeout
+
+    // Fallback attempt with Android UA and direct reel URL if first failed
+    if (result.code !== 0) {
+      const id = extractIdFromUrl(normalizedUrl);
+      const altUrl = id ? `https://m.facebook.com/reel/${id}` : normalizedUrl;
+      const altArgs = [
+        '--no-playlist',
+        '--geo-bypass',
+        '-4',
+        '--add-header', 'Referer:https://m.facebook.com/',
+        '--user-agent', 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+        '-f', 'best[ext=mp4]/best',
+        '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
+        altUrl,
+      ];
+      logger.warn('First yt-dlp attempt failed, retrying with Android UA', { url: normalizedUrl, code: result.code });
+      result = await run('yt-dlp', altArgs, { timeout: 300000 });
+    }
 
     if (result.code !== 0) {
       logger.error('yt-dlp download failed', {
