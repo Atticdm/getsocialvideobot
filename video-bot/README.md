@@ -97,6 +97,10 @@ LOG_LEVEL=info
 - `DOWNLOAD_DIR`: Directory for temporary files (default: `./.tmp`)
 - `MAX_FILE_MB`: Maximum file size in MB (default: 1950)
 - `LOG_LEVEL`: Logging level (default: `info`)
+- `FACEBOOK_COOKIES_B64` (optional): Base64-encoded contents of a Netscape `cookies.txt` file for Facebook. Use this if certain videos require login in your region. To supply:
+  1. Export cookies from your browser to `cookies.txt` (Netscape format)
+  2. Base64-encode the file: `base64 -w0 cookies.txt`
+  3. Set the value as `FACEBOOK_COOKIES_B64` in your deploy platform
 
 ## Usage
 

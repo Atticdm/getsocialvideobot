@@ -4,6 +4,7 @@ import { run } from '../../core/exec';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
 import { FacebookVideoInfo, DownloadResult } from './types';
+import { config } from '../../core/config';
 
 function extractIdFromUrl(originalUrl: string): string | null {
   try {
@@ -40,6 +41,25 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
     normalizedUrl
   ];
 
+  // Verbose yt-dlp logs if app log level is debug/trace
+  if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') {
+    args.unshift('-v');
+  }
+
+  // Optional cookies support (base64-encoded netscape cookies)
+  let cookiesPath: string | undefined;
+  if (config.FACEBOOK_COOKIES_B64) {
+    try {
+      const cookieBuf = Buffer.from(config.FACEBOOK_COOKIES_B64, 'base64');
+      cookiesPath = path.join(outDir, 'cookies.txt');
+      await fs.writeFile(cookiesPath, cookieBuf);
+      args.splice(args.length - 1, 0, '--cookies', cookiesPath);
+      logger.info('Using Facebook cookies for yt-dlp');
+    } catch (e) {
+      logger.warn('Failed to write cookies file, proceeding without cookies', { error: e });
+    }
+  }
+
   try {
     let result = await run('yt-dlp', args, { timeout: 300000 }); // 5 minutes timeout
 
@@ -57,6 +77,12 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
         '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
         altUrl,
       ];
+      if (cookiesPath) {
+        altArgs.splice(altArgs.length - 1, 0, '--cookies', cookiesPath);
+      }
+      if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') {
+        altArgs.unshift('-v');
+      }
       logger.warn('First yt-dlp attempt failed, retrying with Android UA', { url: normalizedUrl, code: result.code });
       result = await run('yt-dlp', altArgs, { timeout: 300000 });
     }

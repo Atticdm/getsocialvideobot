@@ -10,6 +10,8 @@ const configSchema = z.object({
   DOWNLOAD_DIR: z.string().default('./.tmp'),
   MAX_FILE_MB: z.coerce.number().positive().default(1950),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  // Optional: base64-encoded Netscape cookies.txt for Facebook
+  FACEBOOK_COOKIES_B64: z.string().optional().default(''),
 });
 
 export type Config = z.infer<typeof configSchema>;
