@@ -1,9 +1,10 @@
 FROM node:20-slim
 
-# Install system dependencies
+# Install system dependencies (python3 required for yt-dlp zipapp)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    python3 \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
