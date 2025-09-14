@@ -8,13 +8,14 @@ const logsDir = path.join(process.cwd(), 'logs');
 fs.ensureDirSync(logsDir);
 
 const isDevelopment = config.NODE_ENV === 'development';
+const logToFiles = process.env.LOG_TO_FILES === 'true';
 
 const loggerConfig: pino.LoggerOptions = {
   level: config.LOG_LEVEL,
 };
 
 if (isDevelopment) {
-  // Pretty logging for development
+  // Pretty logging to stdout for development
   loggerConfig.transport = {
     target: 'pino-pretty',
     options: {
@@ -23,8 +24,8 @@ if (isDevelopment) {
       ignore: 'pid,hostname',
     },
   };
-} else {
-  // File logging for production
+} else if (logToFiles) {
+  // Optional: file logging for production if explicitly enabled
   loggerConfig.transport = {
     targets: [
       {
