@@ -88,6 +88,9 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
       args.push(a.target);
 
       logger.info('yt-dlp attempt', { attempt: i + 1, target: a.target, cookies: !!(a.useCookies && cookiesPath), ua: a.ua?.includes('Android') ? 'android' : 'desktop' });
+      if (config.DEBUG_YTDLP) {
+        logger.debug('yt-dlp full args', { args });
+      }
       const result = await run('yt-dlp', args, { timeout: 300000 });
       lastResult = result;
       if (result.code === 0) {

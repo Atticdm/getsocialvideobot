@@ -54,6 +54,7 @@ export async function run(
       logger.error('Command execution failed', {
         command,
         args,
+        commandLine: `${command} ${Array.isArray(args) ? args.join(' ') : ''}`,
         durationMs,
         code: execaError.exitCode,
         stdout: execaError.stdout,

@@ -85,7 +85,9 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
   }
 
   try {
-    let result = await run('yt-dlp', [...baseArgs, url], { timeout: 300000 });
+    const firstArgs = [...baseArgs, url];
+    if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (instagram#1)', { args: firstArgs });
+    let result = await run('yt-dlp', firstArgs, { timeout: 300000 });
 
     if (result.code !== 0) {
       // Retry with Android UA and m.instagram referer
@@ -103,6 +105,7 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
       if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') retryArgs.unshift('-v');
 
       logger.warn('First yt-dlp attempt failed for Instagram, retrying with Android UA', { code: result.code });
+      if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (instagram#2)', { args: retryArgs });
       result = await run('yt-dlp', retryArgs, { timeout: 300000 });
     }
 

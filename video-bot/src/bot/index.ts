@@ -6,6 +6,7 @@ import { startCommand } from './commands/start';
 import { helpCommand } from './commands/help';
 import { statusCommand } from './commands/status';
 import { downloadCommand } from './commands/download';
+import { diagCommand } from './commands/diag';
 
 async function main(): Promise<void> {
   try {
@@ -25,6 +26,7 @@ async function main(): Promise<void> {
     bot.command('help', helpCommand);
     bot.command('status', statusCommand);
     bot.command('download', downloadCommand);
+    bot.command('diag', diagCommand);
 
     // Handle keyboard buttons
     bot.hears('📥 Download', (ctx) => {
