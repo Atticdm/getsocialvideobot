@@ -6,6 +6,19 @@ import { ERROR_CODES, AppError } from '../../core/errors';
 import { VideoInfo, DownloadResult } from '../types';
 import { config } from '../../core/config';
 
+function extractReelCode(u: string): string | null {
+  try {
+    const m = u.match(/instagram\.com\/(?:reel|reels)\/([A-Za-z0-9_-]+)/);
+    if (m && m[1]) return m[1];
+  } catch {}
+  return null;
+}
+
+function normalizeReelUrl(u: string): string {
+  const code = extractReelCode(u);
+  return code ? `https://www.instagram.com/reel/${code}/` : u;
+}
+
 function mapYtDlpError(stderr: string): string {
   const s = stderr.toLowerCase();
   if (s.includes('private') || s.includes('login') || s.includes('only available to')) {
@@ -50,84 +63,82 @@ async function findDownloadedFile(outDir: string): Promise<string | null> {
 }
 
 export async function downloadInstagramVideo(url: string, outDir: string): Promise<DownloadResult> {
-  logger.info('Starting Instagram video download', { url, outDir });
+  const normalizedUrl = normalizeReelUrl(url);
+  logger.info('Starting Instagram video download', { url, normalizedUrl, outDir });
 
-  const baseArgs = [
+  // Base args; keep minimal at first like when it worked
+  const base = [
     '--no-playlist',
     '--geo-bypass',
     '-4',
-    '--add-header', 'Referer:https://www.instagram.com/',
-    '--user-agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    '--retries', '3',
+    '--fragment-retries', '10',
+    '--sleep-requests', '1',
     '-f', 'best[ext=mp4]/best',
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
   ];
+  if (config.GEO_BYPASS_COUNTRY) base.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
+  if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') base.unshift('-v');
 
-  if (config.GEO_BYPASS_COUNTRY) {
-    baseArgs.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
-  }
-
-  // Verbose if debug/trace
-  if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') {
-    baseArgs.unshift('-v');
-  }
-
+  // Prepare cookies for later attempts only
   let cookiesPath: string | undefined;
-  if (config['INSTAGRAM_COOKIES_B64']) {
+  const canUseCookies = !!config['INSTAGRAM_COOKIES_B64'] && !config['SKIP_COOKIES'];
+  if (canUseCookies) {
     try {
       const buf = Buffer.from(config['INSTAGRAM_COOKIES_B64'], 'base64');
       cookiesPath = path.join(outDir, 'ig_cookies.txt');
       await fs.writeFile(cookiesPath, buf);
-      baseArgs.push('--cookies', cookiesPath);
-      logger.info('Using Instagram cookies for yt-dlp');
+      logger.info('Instagram cookies detected');
     } catch (e) {
       logger.warn('Failed to write Instagram cookies, proceeding without', { error: e });
+      cookiesPath = undefined;
     }
   }
 
+  type Attempt = { target: string; referer: string; ua: string; useCookies: boolean };
+  const desktopUA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+  const mobileUA = 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+
+  const code = extractReelCode(url) || extractReelCode(normalizedUrl);
+  const mobileUrl = code ? `https://m.instagram.com/reel/${code}/` : undefined;
+
+  const attempts: Attempt[] = [];
+  // Try without cookies first
+  attempts.push({ target: url, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: false });
+  attempts.push({ target: normalizedUrl, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: false });
+  if (mobileUrl) attempts.push({ target: mobileUrl, referer: 'https://m.instagram.com/', ua: mobileUA, useCookies: false });
+  // Then with cookies if available
+  if (cookiesPath) {
+    attempts.push({ target: url, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: true });
+    attempts.push({ target: normalizedUrl, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: true });
+    if (mobileUrl) attempts.push({ target: mobileUrl, referer: 'https://m.instagram.com/', ua: mobileUA, useCookies: true });
+  }
+
   try {
-    const firstArgs = [...baseArgs, url];
-    if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (instagram#1)', { args: firstArgs });
-    let result = await run('yt-dlp', firstArgs, { timeout: 300000 });
-
-    if (result.code !== 0) {
-      // Retry with Android UA and m.instagram referer
-      const retryArgs = [
-        '--no-playlist',
-        '--geo-bypass',
-        '-4',
-        '--add-header', 'Referer:https://m.instagram.com/',
-        '--user-agent', 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-        '-f', 'best[ext=mp4]/best',
-        '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
-        url,
-      ];
-      if (cookiesPath) retryArgs.push('--cookies', cookiesPath);
-      if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') retryArgs.unshift('-v');
-
-      logger.warn('First yt-dlp attempt failed for Instagram, retrying with Android UA', { code: result.code });
-      if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (instagram#2)', { args: retryArgs });
-      result = await run('yt-dlp', retryArgs, { timeout: 300000 });
+    let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
+    for (let i = 0; i < attempts.length; i++) {
+      const a = attempts[i]!;
+      const args = [...base, '--add-header', `Referer:${a.referer}`, '--user-agent', a.ua];
+      if (a.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
+      args.push(a.target);
+      logger.info('yt-dlp attempt (instagram)', { attempt: i + 1, target: a.target, cookies: a.useCookies && !!cookiesPath, ua: a.ua.includes('Android') ? 'android' : 'desktop' });
+      if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (instagram)', { args });
+      const result = await run('yt-dlp', args, { timeout: 300000 });
+      last = result;
+      if (result.code === 0) {
+        const filePath = await findDownloadedFile(outDir);
+        if (!filePath) throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Downloaded file not found', { url: a.target, outDir });
+        const videoInfo = parseVideoInfoFromPath(filePath, a.target);
+        logger.info('Instagram video downloaded successfully', { url: a.target, filePath, videoInfo });
+        return { filePath, videoInfo };
+      }
+      logger.warn('yt-dlp attempt failed (instagram)', { attempt: i + 1, code: result.code });
     }
 
-    if (result.code !== 0) {
-      const stderrPreview = (result.stderr || '').slice(0, 1200);
-      const stdoutPreview = (result.stdout || '').slice(0, 400);
-      logger.error('yt-dlp download failed (instagram)', { url, code: result.code, stderrPreview, stdoutPreview });
-      throw new AppError(
-        mapYtDlpError(result.stderr),
-        'yt-dlp download failed',
-        { url, stderr: result.stderr, stdout: result.stdout, code: result.code }
-      );
-    }
-
-    const filePath = await findDownloadedFile(outDir);
-    if (!filePath) {
-      throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Downloaded file not found', { url, outDir });
-    }
-
-    const videoInfo = parseVideoInfoFromPath(filePath, url);
-    logger.info('Instagram video downloaded successfully', { url, filePath, videoInfo });
-    return { filePath, videoInfo };
+    const stderrPreview = (last?.stderr || '').slice(0, 1200);
+    const stdoutPreview = (last?.stdout || '').slice(0, 400);
+    logger.error('All yt-dlp attempts failed (instagram)', { url, stderrPreview, stdoutPreview });
+    throw new AppError(mapYtDlpError(last?.stderr || ''), 'yt-dlp download failed', { url, stderr: last?.stderr, stdout: last?.stdout, code: last?.code });
   } catch (error) {
     if (error instanceof AppError) throw error;
     logger.error('Unexpected error during Instagram download', { error, url, outDir });
