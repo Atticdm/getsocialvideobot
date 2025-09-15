@@ -62,6 +62,10 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
   ];
 
+  if (config.GEO_BYPASS_COUNTRY) {
+    baseArgs.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
+  }
+
   // Verbose if debug/trace
   if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') {
     baseArgs.unshift('-v');
@@ -124,4 +128,3 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Unexpected error during download', { url, originalError: error });
   }
 }
-

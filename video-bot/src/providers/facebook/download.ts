@@ -41,6 +41,10 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
     normalizedUrl
   ];
 
+  if (config.GEO_BYPASS_COUNTRY) {
+    args.splice(args.length - 1, 0, '--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
+  }
+
   // Verbose yt-dlp logs if app log level is debug/trace
   if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') {
     args.unshift('-v');
@@ -77,6 +81,9 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
         '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
         altUrl,
       ];
+      if (config.GEO_BYPASS_COUNTRY) {
+        altArgs.splice(altArgs.length - 1, 0, '--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
+      }
       if (cookiesPath) {
         altArgs.splice(altArgs.length - 1, 0, '--cookies', cookiesPath);
       }
