@@ -107,6 +107,9 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
     }
 
     if (result.code !== 0) {
+      const stderrPreview = (result.stderr || '').slice(0, 1200);
+      const stdoutPreview = (result.stdout || '').slice(0, 400);
+      logger.error('yt-dlp download failed (instagram)', { url, code: result.code, stderrPreview, stdoutPreview });
       throw new AppError(
         mapYtDlpError(result.stderr),
         'yt-dlp download failed',

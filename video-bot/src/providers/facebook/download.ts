@@ -95,11 +95,13 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
     }
 
     if (result.code !== 0) {
+      const stderrPreview = (result.stderr || '').slice(0, 1200);
+      const stdoutPreview = (result.stdout || '').slice(0, 400);
       logger.error('yt-dlp download failed', {
         url,
         code: result.code,
-        stderr: result.stderr,
-        stdout: result.stdout
+        stderrPreview,
+        stdoutPreview,
       });
       
       throw new AppError(
