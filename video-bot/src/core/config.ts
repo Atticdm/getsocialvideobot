@@ -12,6 +12,8 @@ const configSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   // Optional: base64-encoded Netscape cookies.txt for Facebook
   FACEBOOK_COOKIES_B64: z.string().optional().default(''),
+  // Optional: base64-encoded Netscape cookies.txt for Instagram
+  INSTAGRAM_COOKIES_B64: z.string().optional().default(''),
 });
 
 export type Config = z.infer<typeof configSchema>;

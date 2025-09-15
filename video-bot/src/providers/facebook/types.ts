@@ -1,12 +1,4 @@
-export interface FacebookVideoInfo {
-  id: string;
-  title: string;
-  url: string;
-  duration?: number | undefined;
-  size?: number | undefined;
-}
+import type { VideoInfo, DownloadResult as GenericDownloadResult } from '../types';
 
-export interface DownloadResult {
-  filePath: string;
-  videoInfo: FacebookVideoInfo;
-}
+export type FacebookVideoInfo = VideoInfo;
+export type DownloadResult = GenericDownloadResult;
