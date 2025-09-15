@@ -28,129 +28,89 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
   const normalizedUrl = normalizeFacebookUrl(url);
   logger.info('Starting Facebook video download', { url, normalizedUrl, outDir });
 
-  // Build yt-dlp command arguments
-  const args = [
+  // Common args kept minimal to mimic earlier successful behavior on first attempts
+  const common = [
     '--no-playlist',
     '--geo-bypass',
     '-4',
-    '--add-header', 'Referer:https://www.facebook.com/',
-    '--user-agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    // Prefer MP4 if available, fall back to best
     '-f', 'best[ext=mp4]/best',
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
-    normalizedUrl
   ];
-
   if (config.GEO_BYPASS_COUNTRY) {
-    args.splice(args.length - 1, 0, '--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
+    common.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
   }
-
-  // Verbose yt-dlp logs if app log level is debug/trace
   if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') {
-    args.unshift('-v');
+    common.unshift('-v');
   }
 
-  // Optional cookies support (base64-encoded netscape cookies)
+  // Prepare cookies file if provided (used only in later attempts)
   let cookiesPath: string | undefined;
   if (config.FACEBOOK_COOKIES_B64) {
     try {
       const cookieBuf = Buffer.from(config.FACEBOOK_COOKIES_B64, 'base64');
       cookiesPath = path.join(outDir, 'cookies.txt');
       await fs.writeFile(cookiesPath, cookieBuf);
-      args.splice(args.length - 1, 0, '--cookies', cookiesPath);
-      logger.info('Using Facebook cookies for yt-dlp');
+      logger.info('Facebook cookies detected');
     } catch (e) {
-      logger.warn('Failed to write cookies file, proceeding without cookies', { error: e });
+      logger.warn('Failed to write Facebook cookies file; will proceed without', { error: e });
     }
   }
 
+  const id = extractIdFromUrl(url) || extractIdFromUrl(normalizedUrl);
+  const watchUrl = normalizeFacebookUrl(url);
+  const reelMobile = id ? `https://m.facebook.com/reel/${id}` : undefined;
+
+  type Attempt = { target: string; referer?: string; ua?: string; useCookies?: boolean };
+  const attempts: Attempt[] = [];
+  // 1) Raw URL, no cookies (closest to original working case)
+  attempts.push({ target: url, referer: 'https://www.facebook.com/', ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', useCookies: false });
+  // 2) Normalized watch URL, no cookies
+  attempts.push({ target: watchUrl, referer: 'https://www.facebook.com/', ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', useCookies: false });
+  // 3) Mobile reel URL with Android UA, no cookies
+  if (reelMobile) {
+    attempts.push({ target: reelMobile, referer: 'https://m.facebook.com/', ua: 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36', useCookies: false });
+  }
+  // 4..): Repeat with cookies if available
+  if (cookiesPath) {
+    attempts.push({ target: url, referer: 'https://www.facebook.com/', ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', useCookies: true });
+    attempts.push({ target: watchUrl, referer: 'https://www.facebook.com/', ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', useCookies: true });
+    if (reelMobile) attempts.push({ target: reelMobile, referer: 'https://m.facebook.com/', ua: 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36', useCookies: true });
+  }
+
   try {
-    let result = await run('yt-dlp', args, { timeout: 300000 }); // 5 minutes timeout
+    let lastResult: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
+    for (let i = 0; i < attempts.length; i++) {
+      const a = attempts[i]!;
+      const args: string[] = [...common];
+      if (a.referer) args.push('--add-header', `Referer:${a.referer}`);
+      if (a.ua) args.push('--user-agent', a.ua);
+      if (a.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
+      args.push(a.target);
 
-    // Fallback attempt with Android UA and direct reel URL if first failed
-    if (result.code !== 0) {
-      const id = extractIdFromUrl(normalizedUrl);
-      const altUrl = id ? `https://m.facebook.com/reel/${id}` : normalizedUrl;
-      const altArgs = [
-        '--no-playlist',
-        '--geo-bypass',
-        '-4',
-        '--add-header', 'Referer:https://m.facebook.com/',
-        '--user-agent', 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-        '-f', 'best[ext=mp4]/best',
-        '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
-        altUrl,
-      ];
-      if (config.GEO_BYPASS_COUNTRY) {
-        altArgs.splice(altArgs.length - 1, 0, '--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
+      logger.info('yt-dlp attempt', { attempt: i + 1, target: a.target, cookies: !!(a.useCookies && cookiesPath), ua: a.ua?.includes('Android') ? 'android' : 'desktop' });
+      const result = await run('yt-dlp', args, { timeout: 300000 });
+      lastResult = result;
+      if (result.code === 0) {
+        // Find the downloaded file
+        const filePath = await findDownloadedFile(outDir);
+        if (!filePath) {
+          throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Downloaded file not found', { url: a.target, outDir });
+        }
+        const videoInfo = parseVideoInfoFromPath(filePath, a.target);
+        logger.info('Facebook video downloaded successfully', { url: a.target, filePath, videoInfo });
+        return { filePath, videoInfo };
       }
-      if (cookiesPath) {
-        altArgs.splice(altArgs.length - 1, 0, '--cookies', cookiesPath);
-      }
-      if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') {
-        altArgs.unshift('-v');
-      }
-      logger.warn('First yt-dlp attempt failed, retrying with Android UA', { url: normalizedUrl, code: result.code });
-      result = await run('yt-dlp', altArgs, { timeout: 300000 });
+      logger.warn('yt-dlp attempt failed', { attempt: i + 1, code: result.code });
     }
 
-    if (result.code !== 0) {
-      const stderrPreview = (result.stderr || '').slice(0, 1200);
-      const stdoutPreview = (result.stdout || '').slice(0, 400);
-      logger.error('yt-dlp download failed', {
-        url,
-        code: result.code,
-        stderrPreview,
-        stdoutPreview,
-      });
-      
-      throw new AppError(
-        mapYtDlpError(result.stderr),
-        'yt-dlp download failed',
-        { url, stderr: result.stderr, stdout: result.stdout, code: result.code }
-      );
-    }
-
-    // Find the downloaded file
-    const filePath = await findDownloadedFile(outDir);
-    
-    if (!filePath) {
-      throw new AppError(
-        ERROR_CODES.ERR_INTERNAL,
-        'Downloaded file not found',
-        { url, outDir }
-      );
-    }
-    
-    // Parse video info from filename
-    const videoInfo = parseVideoInfoFromPath(filePath, normalizedUrl);
-
-    logger.info('Facebook video downloaded successfully', { 
-      url, 
-      filePath, 
-      videoInfo 
-    });
-
-    return {
-      filePath,
-      videoInfo,
-    };
+    const stderrPreview = (lastResult?.stderr || '').slice(0, 1200);
+    const stdoutPreview = (lastResult?.stdout || '').slice(0, 400);
+    logger.error('All yt-dlp attempts failed', { url, stderrPreview, stdoutPreview });
+    throw new AppError(mapYtDlpError(lastResult?.stderr || ''), 'yt-dlp download failed', { url, stderr: lastResult?.stderr, stdout: lastResult?.stdout, code: lastResult?.code });
   } catch (error) {
-    if (error instanceof AppError) {
-      throw error;
-    }
-
-    logger.error('Unexpected error during Facebook video download', { 
-      error, 
-      url, 
-      outDir 
-    });
-
-    throw new AppError(
-      ERROR_CODES.ERR_INTERNAL,
-      'Unexpected error during download',
-      { url, originalError: error }
-    );
+    if (error instanceof AppError) throw error;
+    logger.error('Unexpected error during Facebook video download', { error, url, outDir });
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Unexpected error during download', { url, originalError: error });
   }
 }
 
