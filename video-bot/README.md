@@ -110,6 +110,14 @@ LOG_LEVEL=info
 npm run dev
 ```
 
+### Web (local)
+
+```bash
+npm run build
+PORT=3000 npm run start:web
+# open http://localhost:3000
+```
+
 ### Production
 
 ```bash
@@ -130,12 +138,25 @@ pm2 start ecosystem.config.cjs
 # Build image
 docker build -t video-bot .
 
-# Run container
+# Run bot
 docker run -d --name video-bot \
   -e BOT_TOKEN=your_bot_token \
   -v $(pwd)/logs:/app/logs \
   video-bot
+
+# Run web
+docker run -d --name video-web -p 3000:3000 \
+  -e APP_MODE=web -e PORT=3000 \
+  video-bot
 ```
+
+### Railway (Web)
+
+- Create a new Railway service from this repo with Root Directory `video-bot`.
+- Build: `npm ci && npm run build`
+- Start: `APP_MODE=web PORT=3000 npm start` (or `npm run start:web` if using Nixpacks).
+- Set environment variables for providers as needed (e.g., `GEO_BYPASS_COUNTRY`, `*_COOKIES_B64`).
+- Open the service URL and paste a video link.
 
 ## Bot Commands
 

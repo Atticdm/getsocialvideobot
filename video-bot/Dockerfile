@@ -37,5 +37,6 @@ USER node
 # Expose port (if needed for health checks)
 EXPOSE 3000
 
-# Start the application
-CMD ["node", "dist/bot/index.js"]
+# Start mode (bot by default). Set APP_MODE=web to run web server
+ENV APP_MODE=bot
+CMD ["sh","-c","node dist/${APP_MODE}/server.js 2>/dev/null || node dist/${APP_MODE}/index.js"]
