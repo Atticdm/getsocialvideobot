@@ -39,4 +39,4 @@ EXPOSE 3000
 
 # Start mode (bot by default). Set APP_MODE=web to run web server
 ENV APP_MODE=bot
-CMD ["sh","-c","node dist/${APP_MODE}/server.js 2>/dev/null || node dist/${APP_MODE}/index.js"]
+CMD ["sh","-lc","if [ \"$APP_MODE\" = \"web\" ]; then node dist/web/server.js; else node dist/bot/index.js; fi"]
