@@ -19,7 +19,7 @@ async function main(): Promise<void> {
     await ensureTempDir();
 
     // Create bot instance
-    const bot = new Telegraf(config.BOT_TOKEN);
+    const bot = new Telegraf(config.BOT_TOKEN!);
 
     // Register commands
     bot.command('start', startCommand);
