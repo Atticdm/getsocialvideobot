@@ -14,6 +14,7 @@ const configSchema = z.object({
   FACEBOOK_COOKIES_B64: z.string().optional().default(''),
   // Optional: base64-encoded Netscape cookies.txt for Instagram
   INSTAGRAM_COOKIES_B64: z.string().optional().default(''),
+  LINKEDIN_COOKIES_B64: z.string().optional().default(''),
   DEBUG_YTDLP: z.coerce.boolean().optional().default(false),
   SKIP_COOKIES: z.coerce.boolean().optional().default(false),
   // Optional: two-letter country code to try for geo-bypass (e.g. US, NL)

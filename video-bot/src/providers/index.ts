@@ -2,9 +2,11 @@ import { isFacebookUrl } from './facebook/detect';
 import { downloadFacebookVideo } from './facebook/download';
 import { isInstagramUrl } from './instagram/detect';
 import { downloadInstagramVideo } from './instagram/download';
+import { isLinkedInUrl } from './linkedin/detect';
+import { downloadLinkedInVideo } from './linkedin/download';
 import { DownloadResult } from './types';
 
-export type ProviderName = 'facebook' | 'instagram';
+export type ProviderName = 'facebook' | 'instagram' | 'linkedin';
 
 export interface Provider {
   download(url: string, outDir: string): Promise<DownloadResult>;
@@ -16,6 +18,9 @@ export function detectProvider(url: string): ProviderName | null {
   }
   if (isInstagramUrl(url)) {
     return 'instagram';
+  }
+  if (isLinkedInUrl(url)) {
+    return 'linkedin';
   }
   return null;
 }
@@ -29,6 +34,10 @@ export function getProvider(name: ProviderName): Provider {
     case 'instagram':
       return {
         download: downloadInstagramVideo,
+      };
+    case 'linkedin':
+      return {
+        download: downloadLinkedInVideo,
       };
     default:
       throw new Error(`Unknown provider: ${name}`);

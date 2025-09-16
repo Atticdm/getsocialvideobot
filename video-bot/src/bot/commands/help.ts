@@ -14,13 +14,14 @@ export async function helpCommand(ctx: Context): Promise<void> {
 /start - Show welcome message
 /help - Show this help message
 /status - Check bot status and system info
-/download <url> - Download a video (Facebook, Instagram)
+/download <url> - Download a video (Facebook, Instagram, LinkedIn)
 
 **Usage:** /download <video_url>
 
 **Examples:**
 /download https://www.facebook.com/watch/?v=123456789
 /download https://www.instagram.com/reel/XXXXXXXXXXX/
+/download https://www.linkedin.com/feed/update/urn:li:activity:XXXXXXXXXXXX/
 
 **Notes:**
 • Only public videos are supported (some may require cookies)
