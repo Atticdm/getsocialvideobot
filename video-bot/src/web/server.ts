@@ -76,16 +76,15 @@ fastify.get('/download', async (req, reply) => {
     const result = await provider.download(url, sessionDir);
     await ensureBelowLimit(result.filePath);
     const fileName = path.basename(result.filePath);
-    const ext = path.extname(fileName).toLowerCase();
-    const mime = ext === '.mp4' ? 'video/mp4'
-               : ext === '.webm' ? 'video/webm'
-               : ext === '.mkv' ? 'video/x-matroska'
-               : 'application/octet-stream';
+    // Force download: always use generic content type to avoid inline playback
+    // const ext = path.extname(fileName).toLowerCase();
+    const mime = 'application/octet-stream';
 
     // Stream settings
     reply.header('X-Accel-Buffering', 'no');
     reply.header('Accept-Ranges', 'bytes');
     reply.header('Cache-Control', 'no-store');
+    reply.header('X-Content-Type-Options', 'nosniff');
     reply.raw.setTimeout(10 * 60 * 1000);
 
     const st = await fs.stat(result.filePath);
