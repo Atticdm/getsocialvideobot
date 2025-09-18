@@ -206,7 +206,7 @@ fastify.get('/file/:id', async (req, reply) => {
         reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
         const stream = createReadStream(filePath, { start, end });
         stream.on('error', async (e) => { logger.error('file range stream error', { error: e }); try { stream.destroy(); } catch {}; await cleanup(); });
-        reply.raw.on('close', cleanup);
+        stream.on('close', cleanup);
         return reply.send(stream);
       }
     }
@@ -215,10 +215,11 @@ fastify.get('/file/:id', async (req, reply) => {
     reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
     const stream = createReadStream(filePath);
     stream.on('error', async (e) => { logger.error('file stream error', { error: e }); try { stream.destroy(); } catch {}; await cleanup(); });
-    reply.raw.on('close', cleanup);
+    stream.on('close', cleanup);
     return reply.send(stream);
   } catch (e) {
-    logger.error('file route failed', { error: e });
+    const err: any = e;
+    logger.error('file route failed', { message: err?.message, code: err?.code, stack: err?.stack });
     return reply.code(500).send({ error: 'stream failed' });
   }
 });
