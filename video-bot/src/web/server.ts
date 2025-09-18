@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { detectProvider, getProvider } from '../providers';
 import { ensureTempDir, makeSessionDir, safeRemove } from '../core/fs';
 import { logger } from '../core/logger';
+import { ensureBelowLimit } from '../core/size';
 // NOTE: AppError types are used in provider layer; web job converts to plain message
 import * as path from 'path';
 import * as fs from 'fs-extra';
@@ -44,7 +45,7 @@ async function startJob(url: string): Promise<Job> {
       job.sessionDir = sessionDir;
       const provider = getProvider(providerName);
       const result = await provider.download(url, sessionDir);
-      // optional: size check happens in provider pipeline; for web we just stream
+      await ensureBelowLimit(result.filePath);
       job.filePath = result.filePath;
       job.fileName = path.basename(result.filePath);
       job.status = 'ready';
@@ -115,15 +116,27 @@ fastify.get('/download', async (req, reply) => {
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Preparing download…</title>
-  <style>body{font-family:system-ui,sans-serif;background:#0f1221;color:#e6e8f0;padding:2rem} .box{max-width:720px;margin:0 auto;background:#171a2f;border-radius:12px;padding:24px}</style>
+  <style>body{font-family:system-ui,sans-serif;background:#0f1221;color:#e6e8f0;padding:2rem} .box{max-width:720px;margin:0 auto;background:#171a2f;border-radius:12px;padding:24px} .muted{color:#9aa}</style>
   <script>
   const id = ${JSON.stringify(job.id)};
   async function poll(){
     try{
       const r = await fetch('/status?id='+id,{cache:'no-store'});
       const j = await r.json();
-      if(j.status==='ready'){ window.location = '/file/'+id; return; }
-      if(j.status==='error'){ document.getElementById('msg').textContent = 'Error: '+(j.error||'failed'); return; }
+      if(j.status==='ready'){
+        const msg = document.getElementById('msg');
+        msg.textContent = 'Ready. The download should start automatically.';
+        let f = document.getElementById('dl');
+        if(!f){ f = document.createElement('iframe'); f.id='dl'; f.style.display='none'; document.body.appendChild(f); }
+        f.src = '/file/'+id;
+        const a = document.getElementById('link');
+        a.setAttribute('href','/file/'+id); a.style.display='inline-block';
+        return;
+      }
+      if(j.status==='error'){
+        document.getElementById('msg').textContent = 'Error: '+(j.error||'failed');
+        return;
+      }
     }catch(e){ /* ignore */ }
     setTimeout(poll, 1500);
   }
@@ -132,6 +145,7 @@ fastify.get('/download', async (req, reply) => {
   <body><div class="box">
   <h1>Preparing your file…</h1>
   <p id="msg">This may take a minute. The download will start automatically.</p>
+  <p class="muted"><a id="link" href="#" style="display:none">Click here if your download doesn't start</a></p>
   </div></body></html>`;
   reply.type('text/html').send(html);
 });
@@ -165,7 +179,7 @@ fastify.get('/file/:id', async (req, reply) => {
     const mime = 'application/octet-stream';
     const cleanup = async () => {
       try { await safeRemove(job.sessionDir || ''); } catch {}
-      jobs.delete(id);
+      setTimeout(() => { jobs.delete(id); }, 60 * 1000);
     };
     if (range) {
       const m = range.match(/bytes=(\d*)-(\d*)/);
