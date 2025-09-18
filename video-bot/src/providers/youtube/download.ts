@@ -49,9 +49,6 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     '--retries', '3',
     '--fragment-retries', '10',
     '--sleep-requests', '1',
-    // Prefer mp4, otherwise best available; remux to mp4 when possible (no re-encode)
-    '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    '--remux-video', 'mp4',
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
   ];
   if (config.GEO_BYPASS_COUNTRY) base.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
@@ -72,21 +69,41 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     }
   }
 
-  type Attempt = { useCookies: boolean; ua: string; target: string };
+  type Attempt = { useCookies: boolean; ua: string; target: string; format: string[] };
   const desktopUA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const mobileUA = 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
   const attempts: Attempt[] = [];
-  attempts.push({ target: url, ua: desktopUA, useCookies: false });
-  attempts.push({ target: url, ua: mobileUA, useCookies: false });
+  // Attempt 1: Prefer H264/AAC that Telegram handles best
+  attempts.push({
+    target: url,
+    ua: desktopUA,
+    useCookies: false,
+    format: ['-f', 'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]','--merge-output-format','mp4']
+  });
+  // Attempt 2: Any bestvideo+audio, then merge to mp4
+  attempts.push({
+    target: url,
+    ua: desktopUA,
+    useCookies: false,
+    format: ['-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
+  });
+  // Attempt 3: Mobile UA may expose progressive MP4
+  attempts.push({
+    target: url,
+    ua: mobileUA,
+    useCookies: false,
+    format: ['-f','best[ext=mp4]/best','--remux-video','mp4']
+  });
+  // Attempt 4: With cookies (if provided)
   if (cookiesPath) {
-    attempts.push({ target: url, ua: desktopUA, useCookies: true });
+    attempts.push({ target: url, ua: desktopUA, useCookies: true, format: ['-f','bestvideo*+bestaudio/best','--merge-output-format','mp4'] });
   }
 
   try {
     let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
     for (let i = 0; i < attempts.length; i++) {
       const a = attempts[i]!;
-      const args = [...base, '--user-agent', a.ua];
+      const args = [...base, ...a.format, '--user-agent', a.ua];
       if (a.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
       args.push(a.target);
       if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (youtube)', { args });
@@ -112,4 +129,3 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Unexpected error during download', { url, originalError: error });
   }
 }
-
