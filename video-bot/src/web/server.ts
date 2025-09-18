@@ -116,7 +116,11 @@ fastify.get('/', async (req, reply) => {
           const j = await r.json();
           if(j.status==='ready'){
             statusEl.textContent = 'Ready. Downloading…';
-            document.getElementById('dl').src = '/file/'+id;
+            // prefer anchor with download attribute to avoid iframe cancellations
+            const a = document.createElement('a');
+            a.href = '/file/'+id; a.download = '';
+            a.style.display='none'; document.body.appendChild(a); a.click();
+            // keep polling a couple more times to ensure no error state flips
             return;
           }
           if(j.status==='error'){
@@ -177,10 +181,17 @@ fastify.get('/file/:id', async (req, reply) => {
   if (!job) return reply.code(404).send({ error: 'Not found' });
   if (job.status !== 'ready' || !job.filePath || !job.fileName) return reply.code(409).send({ error: 'Not ready' });
   try {
+    logger.debug('file route start', { id, filePath: job.filePath, fileName: job.fileName });
     const filePath = job.filePath;
     const fileName = job.fileName;
+    const exists = await fs.pathExists(filePath);
+    if (!exists) {
+      logger.error('file route: file not found on disk', { id, filePath });
+      return reply.code(410).send({ error: 'gone' });
+    }
     const st = await fs.stat(filePath);
     const total = st.size;
+    logger.debug('file route stat', { id, total });
     reply.header('X-Accel-Buffering', 'no');
     reply.header('Accept-Ranges', 'bytes');
     reply.header('Cache-Control', 'no-store');
@@ -199,13 +210,14 @@ fastify.get('/file/:id', async (req, reply) => {
         const start = m[1] ? parseInt(m[1], 10) : 0;
         const end = m[2] ? Math.min(parseInt(m[2], 10), total - 1) : total - 1;
         const chunk = end - start + 1;
+        logger.debug('file route range', { id, start, end, chunk });
         reply.code(206);
         reply.header('Content-Range', `bytes ${start}-${end}/${total}`);
         reply.header('Content-Length', String(chunk));
         reply.header('Content-Type', mime);
         reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
         const stream = createReadStream(filePath, { start, end });
-        stream.on('error', async (e) => { logger.error('file range stream error', { error: e }); try { stream.destroy(); } catch {}; await cleanup(); });
+        stream.on('error', async (e: any) => { logger.error('file range stream error', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; await cleanup(); });
         stream.on('close', cleanup);
         return reply.send(stream);
       }
@@ -214,12 +226,12 @@ fastify.get('/file/:id', async (req, reply) => {
     reply.header('Content-Type', mime);
     reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
     const stream = createReadStream(filePath);
-    stream.on('error', async (e) => { logger.error('file stream error', { error: e }); try { stream.destroy(); } catch {}; await cleanup(); });
+    stream.on('error', async (e: any) => { logger.error('file stream error', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; await cleanup(); });
     stream.on('close', cleanup);
     return reply.send(stream);
   } catch (e) {
     const err: any = e;
-    logger.error('file route failed', { message: err?.message, code: err?.code, stack: err?.stack });
+    logger.error('file route failed', { id, message: err?.message, code: err?.code, stack: err?.stack });
     return reply.code(500).send({ error: 'stream failed' });
   }
 });
