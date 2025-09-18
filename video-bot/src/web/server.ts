@@ -99,55 +99,26 @@ fastify.get('/', async (_req, reply) => {
 // Kick off job, return progress page that polls /status and redirects to /file/:id when ready
 fastify.get('/download', async (req, reply) => {
   const url = (req.query as any)?.url as string | undefined;
-  const ip = (req.ip || 'unknown');
-  if (!url) {
-    reply.code(400).send({ error: 'Missing url' });
-    return;
-  }
-  const count = activeByIp.get(ip) || 0;
-  if (count >= MAX_PER_IP) return reply.code(429).send({ error: 'Too many concurrent downloads from this IP' });
-  activeByIp.set(ip, count + 1);
+  const q = url ? ('?url=' + encodeURIComponent(url)) : '';
+  reply.header('Content-Type','text/html').send(`<!doctype html><meta http-equiv="refresh" content="0; url=/${q}">`);
+});
 
-  const job = await startJob(url);
-  activeByIp.set(ip, Math.max(0, (activeByIp.get(ip) || 1) - 1));
-
-  const html = `<!doctype html>
-  <html><head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Preparing download…</title>
-  <style>body{font-family:system-ui,sans-serif;background:#0f1221;color:#e6e8f0;padding:2rem} .box{max-width:720px;margin:0 auto;background:#171a2f;border-radius:12px;padding:24px} .muted{color:#9aa}</style>
-  <script>
-  const id = ${JSON.stringify(job.id)};
-  async function poll(){
-    try{
-      const r = await fetch('/status?id='+id,{cache:'no-store'});
-      const j = await r.json();
-      if(j.status==='ready'){
-        const msg = document.getElementById('msg');
-        msg.textContent = 'Ready. The download should start automatically.';
-        let f = document.getElementById('dl');
-        if(!f){ f = document.createElement('iframe'); f.id='dl'; f.style.display='none'; document.body.appendChild(f); }
-        f.src = '/file/'+id;
-        const a = document.getElementById('link');
-        a.setAttribute('href','/file/'+id); a.style.display='inline-block';
-        return;
-      }
-      if(j.status==='error'){
-        document.getElementById('msg').textContent = 'Error: '+(j.error||'failed');
-        return;
-      }
-    }catch(e){ /* ignore */ }
-    setTimeout(poll, 1500);
+// Start job via AJAX from the main page
+fastify.post('/api/start', async (req, reply) => {
+  try {
+    const body = (req.body as any) || {};
+    const url = (body.url || '').toString();
+    if (!url) return reply.code(400).send({ error: 'Missing url' });
+    const count = activeByIp.get(req.ip) || 0;
+    if (count >= MAX_PER_IP) return reply.code(429).send({ error: 'Too many concurrent downloads from this IP' });
+    activeByIp.set(req.ip, count + 1);
+    const job = await startJob(url);
+    activeByIp.set(req.ip, Math.max(0, (activeByIp.get(req.ip) || 1) - 1));
+    reply.send({ id: job.id });
+  } catch (e) {
+    logger.error('api/start failed', { error: e });
+    reply.code(500).send({ error: 'Failed to start' });
   }
-  window.onload = poll;
-  </script></head>
-  <body><div class="box">
-  <h1>Preparing your file…</h1>
-  <p id="msg">This may take a minute. The download will start automatically.</p>
-  <p class="muted"><a id="link" href="#" style="display:none">Click here if your download doesn't start</a></p>
-  </div></body></html>`;
-  reply.type('text/html').send(html);
 });
 
 // Job status
@@ -155,7 +126,7 @@ fastify.get('/status', async (req, reply) => {
   const id = (req.query as any)?.id as string;
   const job = id && jobs.get(id);
   if (!job) return reply.code(404).send({ error: 'Not found' });
-  reply.send({ status: job.status, error: job.error || undefined });
+  reply.send({ status: job.status, error: job.error || undefined, errorCode: (job as any).errorCode || undefined });
 });
 
 // File streaming endpoint (forced download)
