@@ -82,28 +82,42 @@ fastify.get('/download', async (req, reply) => {
                : ext === '.mkv' ? 'video/x-matroska'
                : 'application/octet-stream';
 
-    // Prevent proxies from buffering; increase server timeout for long streams
+    // Stream settings
     reply.header('X-Accel-Buffering', 'no');
-    reply.raw.setTimeout(10 * 60 * 1000); // 10 minutes
+    reply.header('Accept-Ranges', 'bytes');
+    reply.header('Cache-Control', 'no-store');
+    reply.raw.setTimeout(10 * 60 * 1000);
 
-    // If stat is available, include content-length
-    try {
-      const st = await fs.stat(result.filePath);
-      reply.header('Content-Length', String(st.size));
-    } catch {}
+    const st = await fs.stat(result.filePath);
+    const total = st.size;
+    const rangeHeader = (req.headers as any)['range'] as string | undefined;
 
+    const cleanup = async () => { await safeRemove(sessionDir); };
+
+    if (rangeHeader) {
+      const m = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+      if (m) {
+        const start = m[1] ? parseInt(m[1], 10) : 0;
+        const end = m[2] ? Math.min(parseInt(m[2], 10), total - 1) : total - 1;
+        const chunkSize = end - start + 1;
+        reply.code(206);
+        reply.header('Content-Range', `bytes ${start}-${end}/${total}`);
+        reply.header('Content-Length', String(chunkSize));
+        reply.header('Content-Type', mime);
+        reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
+        const stream = createReadStream(result.filePath, { start, end });
+        stream.on('error', async (err) => { logger.error('Range stream error', { error: err }); try { stream.destroy(); } catch {}; await cleanup(); });
+        reply.raw.on('close', cleanup);
+        return reply.send(stream);
+      }
+    }
+
+    // No range header → send full file
+    reply.header('Content-Length', String(total));
     reply.header('Content-Type', mime);
     reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
-
     const stream = createReadStream(result.filePath);
-    const cleanup = async () => {
-      await safeRemove(sessionDir);
-    };
-    stream.on('error', async (err) => {
-      logger.error('Stream error while sending file', { error: err });
-      try { stream.destroy(); } catch {}
-      await cleanup();
-    });
+    stream.on('error', async (err) => { logger.error('Stream error while sending file', { error: err }); try { stream.destroy(); } catch {}; await cleanup(); });
     reply.raw.on('close', cleanup);
     return reply.send(stream);
   } catch (err) {

@@ -49,6 +49,7 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     '--retries', '3',
     '--fragment-retries', '10',
     '--sleep-requests', '1',
+    '--postprocessor-args', 'ffmpeg:-movflags +faststart',
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
   ];
   if (config.GEO_BYPASS_COUNTRY) base.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
