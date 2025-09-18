@@ -6,6 +6,7 @@ import { logger } from '../core/logger';
 import { AppError, toUserMessage } from '../core/errors';
 import * as path from 'path';
 import * as fs from 'fs-extra';
+import { createReadStream } from 'fs';
 
 const fastify = Fastify({ logger: false });
 const PORT = Number(process.env['PORT'] || 3000);
@@ -75,14 +76,35 @@ fastify.get('/download', async (req, reply) => {
     const result = await provider.download(url, sessionDir);
     await ensureBelowLimit(result.filePath);
     const fileName = path.basename(result.filePath);
+    const ext = path.extname(fileName).toLowerCase();
+    const mime = ext === '.mp4' ? 'video/mp4'
+               : ext === '.webm' ? 'video/webm'
+               : ext === '.mkv' ? 'video/x-matroska'
+               : 'application/octet-stream';
 
-    reply.header('Content-Type', 'application/octet-stream');
+    // Prevent proxies from buffering; increase server timeout for long streams
+    reply.header('X-Accel-Buffering', 'no');
+    reply.raw.setTimeout(10 * 60 * 1000); // 10 minutes
+
+    // If stat is available, include content-length
+    try {
+      const st = await fs.stat(result.filePath);
+      reply.header('Content-Length', String(st.size));
+    } catch {}
+
+    reply.header('Content-Type', mime);
     reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
-    const stream = fs.createReadStream(result.filePath);
-    // Ensure cleanup after stream ends
-    stream.on('close', async () => {
+
+    const stream = createReadStream(result.filePath);
+    const cleanup = async () => {
       await safeRemove(sessionDir);
+    };
+    stream.on('error', async (err) => {
+      logger.error('Stream error while sending file', { error: err });
+      try { stream.destroy(); } catch {}
+      await cleanup();
     });
+    reply.raw.on('close', cleanup);
     return reply.send(stream);
   } catch (err) {
     await safeRemove(sessionDir);
