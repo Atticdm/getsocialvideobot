@@ -63,7 +63,8 @@ async function startJob(url: string): Promise<Job> {
   return job;
 }
 
-fastify.get('/', async (_req, reply) => {
+fastify.get('/', async (req, reply) => {
+  const initUrl = (req.query as any)?.url as string | undefined;
   const html = `<!doctype html>
   <html lang="en">
   <head>
@@ -74,23 +75,63 @@ fastify.get('/', async (_req, reply) => {
       body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;margin:0;padding:2rem;background:#0f1221;color:#e6e8f0}
       .card{max-width:720px;margin:0 auto;background:#171a2f;border-radius:12px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
       h1{margin:0 0 12px 0;font-size:22px}
-      p{margin:4px 0 16px 0;color:#aab}
+      p{margin:4px 0 12px 0;color:#aab}
       form{display:flex;gap:8px}
       input[type=url]{flex:1;padding:12px;border-radius:8px;border:1px solid #303654;background:#0f1221;color:#e6e8f0}
       button{padding:12px 16px;border-radius:8px;border:0;background:#4c6fff;color:#fff;font-weight:600;cursor:pointer}
       small{color:#99a}
+      #status{margin-top:12px;color:#aab}
     </style>
   </head>
   <body>
     <div class="card">
       <h1>Video Downloader</h1>
       <p>Paste a public video URL (Facebook / Instagram / LinkedIn / YouTube).</p>
-      <form action="/download" method="get">
-        <input type="url" name="url" placeholder="https://..." required />
+      <form id="frm" onsubmit="event.preventDefault(); start(document.getElementById('url').value);">
+        <input id="url" type="url" name="url" placeholder="https://..." required />
         <button type="submit">Download</button>
       </form>
+      <p id="status"></p>
       <p><small>Files are processed temporarily and deleted after download.</small></p>
     </div>
+    <iframe id="dl" style="display:none"></iframe>
+    <script>
+      const initUrl = ${JSON.stringify(initUrl || '')};
+      const statusEl = document.getElementById('status');
+
+      async function start(url){
+        if(!url){ statusEl.textContent = 'Enter URL'; return; }
+        statusEl.textContent = 'Starting…';
+        try{
+          const r = await fetch('/api/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ url }) });
+          const j = await r.json();
+          if(!j.id){ statusEl.textContent = j.error || 'Failed to start'; return; }
+          poll(j.id);
+        }catch(e){ statusEl.textContent = 'Failed to start'; }
+      }
+
+      async function poll(id){
+        try{
+          const r = await fetch('/status?id='+encodeURIComponent(id), { cache:'no-store' });
+          const j = await r.json();
+          if(j.status==='ready'){
+            statusEl.textContent = 'Ready. Downloading…';
+            document.getElementById('dl').src = '/file/'+id;
+            return;
+          }
+          if(j.status==='error'){
+            statusEl.textContent = 'Error'+(j.errorCode ? ' ('+j.errorCode+')' : '')+': '+(j.error || 'failed');
+            return;
+          }
+        }catch(e){ /* network glitch; retry */ }
+        setTimeout(()=>poll(id), 1200);
+      }
+
+      if(initUrl){
+        document.getElementById('url').value = initUrl;
+        start(initUrl);
+      }
+    </script>
   </body>
   </html>`;
   reply.type('text/html').send(html);
