@@ -24,6 +24,9 @@ type Job = {
   fileName?: string;
   error?: string;
   sessionDir?: string;
+  // streaming control
+  activeStreams?: number;
+  cleanupTimer?: any;
 };
 const jobs = new Map<string, Job>();
 
@@ -33,7 +36,7 @@ function newId() {
 
 async function startJob(url: string): Promise<Job> {
   const id = newId();
-  const job: Job = { id, url, status: 'pending' };
+  const job: Job = { id, url, status: 'pending', activeStreams: 0 };
   jobs.set(id, job);
 
   (async () => {
@@ -61,6 +64,21 @@ async function startJob(url: string): Promise<Job> {
   });
 
   return job;
+}
+
+function cancelCleanup(job: Job) {
+  if (job.cleanupTimer) { clearTimeout(job.cleanupTimer); job.cleanupTimer = undefined; }
+}
+
+async function finalizeCleanup(job: Job) {
+  try { await safeRemove(job.sessionDir || ''); } catch {}
+  jobs.delete(job.id);
+}
+
+function scheduleCleanup(job: Job, delayMs = 120000) {
+  if ((job.activeStreams || 0) > 0) return;
+  cancelCleanup(job);
+  job.cleanupTimer = setTimeout(() => { void finalizeCleanup(job); }, delayMs);
 }
 
 fastify.get('/', async (req, reply) => {
@@ -200,10 +218,11 @@ fastify.get('/file/:id', async (req, reply) => {
 
     const range = (req.headers as any)['range'] as string | undefined;
     const mime = 'application/octet-stream';
-    const cleanup = async () => {
-      try { await safeRemove(job.sessionDir || ''); } catch {}
-      setTimeout(() => { jobs.delete(id); }, 60 * 1000);
-    };
+    // mark stream active
+    cancelCleanup(job);
+    job.activeStreams = (job.activeStreams || 0) + 1;
+    logger.debug('file stream opened', { id, active: job.activeStreams });
+    const onClose = () => { job.activeStreams = (job.activeStreams || 1) - 1; logger.debug('file stream closed', { id, active: job.activeStreams }); scheduleCleanup(job); };
     if (range) {
       const m = range.match(/bytes=(\d*)-(\d*)/);
       if (m) {
@@ -217,8 +236,8 @@ fastify.get('/file/:id', async (req, reply) => {
         reply.header('Content-Type', mime);
         reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
         const stream = createReadStream(filePath, { start, end });
-        stream.on('error', async (e: any) => { logger.error('file range stream error', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; await cleanup(); });
-        stream.on('close', cleanup);
+        stream.on('error', (e: any) => { logger.error('file range stream error', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; onClose(); });
+        stream.on('close', onClose);
         return reply.send(stream);
       }
     }
@@ -226,8 +245,8 @@ fastify.get('/file/:id', async (req, reply) => {
     reply.header('Content-Type', mime);
     reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
     const stream = createReadStream(filePath);
-    stream.on('error', async (e: any) => { logger.error('file stream error', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; await cleanup(); });
-    stream.on('close', cleanup);
+    stream.on('error', (e: any) => { logger.error('file stream error', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; onClose(); });
+    stream.on('close', onClose);
     return reply.send(stream);
   } catch (e) {
     const err: any = e;
