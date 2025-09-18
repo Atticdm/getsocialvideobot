@@ -210,19 +210,32 @@ fastify.get('/file/:id', async (req, reply) => {
     const st = await fs.stat(filePath);
     const total = st.size;
     logger.debug('file route stat', { id, total });
-    reply.header('X-Accel-Buffering', 'no');
-    reply.header('Accept-Ranges', 'bytes');
-    reply.header('Cache-Control', 'no-store');
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.raw.setTimeout(10 * 60 * 1000);
-
     const range = (req.headers as any)['range'] as string | undefined;
     const mime = 'application/octet-stream';
-    // mark stream active
     cancelCleanup(job);
     job.activeStreams = (job.activeStreams || 0) + 1;
     logger.debug('file stream opened', { id, active: job.activeStreams });
-    const onClose = () => { job.activeStreams = (job.activeStreams || 1) - 1; logger.debug('file stream closed', { id, active: job.activeStreams }); scheduleCleanup(job); };
+    const onClose = () => {
+      job.activeStreams = (job.activeStreams || 1) - 1;
+      logger.debug('file stream closed', { id, active: job.activeStreams });
+      scheduleCleanup(job);
+    };
+
+    // Build headers
+    const headers: Record<string, string> = {
+      'X-Accel-Buffering': 'no',
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Type': mime,
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+    };
+
+    reply.raw.setTimeout(10 * 60 * 1000);
+    reply.hijack(); // we will manage the stream ourselves
+
+    let status = 200;
+    let stream: any;
     if (range) {
       const m = range.match(/bytes=(\d*)-(\d*)/);
       if (m) {
@@ -230,24 +243,23 @@ fastify.get('/file/:id', async (req, reply) => {
         const end = m[2] ? Math.min(parseInt(m[2], 10), total - 1) : total - 1;
         const chunk = end - start + 1;
         logger.debug('file route range', { id, start, end, chunk });
-        reply.code(206);
-        reply.header('Content-Range', `bytes ${start}-${end}/${total}`);
-        reply.header('Content-Length', String(chunk));
-        reply.header('Content-Type', mime);
-        reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
-        const stream = createReadStream(filePath, { start, end });
-        stream.on('error', (e: any) => { logger.error('file range stream error', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; onClose(); });
-        stream.on('close', onClose);
-        return reply.send(stream);
+        headers['Content-Range'] = `bytes ${start}-${end}/${total}`;
+        headers['Content-Length'] = String(chunk);
+        status = 206;
+        stream = createReadStream(filePath, { start, end });
       }
     }
-    reply.header('Content-Length', String(total));
-    reply.header('Content-Type', mime);
-    reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
-    const stream = createReadStream(filePath);
-    stream.on('error', (e: any) => { logger.error('file stream error', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; onClose(); });
+    if (!stream) {
+      headers['Content-Length'] = String(total);
+      stream = createReadStream(filePath);
+    }
+
+    // write headers and pipe
+    try { reply.raw.writeHead(status, headers); } catch (e: any) { logger.error('writeHead failed', { id, message: e?.message }); onClose(); return; }
+    stream.on('error', (e: any) => { logger.warn('stream error (client likely aborted)', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; onClose(); });
     stream.on('close', onClose);
-    return reply.send(stream);
+    stream.pipe(reply.raw);
+    return;
   } catch (e) {
     const err: any = e;
     logger.error('file route failed', { id, message: err?.message, code: err?.code, stack: err?.stack });
