@@ -71,68 +71,35 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     }
   }
 
-  // Enhanced attempts with more strategies for better success rate
-  type Attempt = { name: string; useCookies: boolean; ua: string; args: string[] };
+  // Optimized download strategies for better video+audio merging
+  type Attempt = { name: string; useCookies: boolean; args: string[] };
   const desktopUA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-  const mobileUA = 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
-  const tvUA = 'Mozilla/5.0 (Linux; Tizen 2.3) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.3 TV Safari/538.1';
+
   const attempts: Attempt[] = [];
-  
-  // 1) Standard Merge (bestvideo+audio with fallbacks to mp4/best)
+
+  // Attempt 1: Flexible Merge. The most reliable method.
+  // Gets the best video and best audio streams regardless of container and merges them into an MP4 file.
   attempts.push({
-    name: 'Standard Merge',
+    name: 'Flexible Merge',
     useCookies: false,
-    ua: desktopUA,
-    args: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best','--merge-output-format','mp4']
+    args: ['-f', 'bestvideo*+bestaudio/best', '--merge-output-format', 'mp4']
   });
-  
-  // 2) Mobile/Shorts (android client)
+
+  // Attempt 2: Progressive Fallback.
+  // Useful for lower resolutions or if merging fails. Gets the best pre-merged MP4 file.
   attempts.push({
-    name: 'Mobile/Shorts',
+    name: 'Progressive Fallback',
     useCookies: false,
-    ua: mobileUA,
-    args: ['--add-header','Referer:https://m.youtube.com','-f','best[ext=mp4]/best','--extractor-args','youtube:player_client=android']
+    args: ['-f', 'best[ext=mp4]/best']
   });
-  
-  // 3) TV client (often bypasses some restrictions)
-  attempts.push({
-    name: 'TV Client',
-    useCookies: false,
-    ua: tvUA,
-    args: ['--add-header','Referer:https://www.youtube.com','-f','best[ext=mp4]/best','--extractor-args','youtube:player_client=tv_embedded']
-  });
-  
-  // 4) iOS client (different user agent)
-  attempts.push({
-    name: 'iOS Client',
-    useCookies: false,
-    ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-    args: ['--add-header','Referer:https://www.youtube.com','-f','best[ext=mp4]/best','--extractor-args','youtube:player_client=ios']
-  });
-  
-  // 5) Flexible fallback (allow any containers, remux to mp4)
-  attempts.push({
-    name: 'Flexible Fallback',
-    useCookies: false,
-    ua: desktopUA,
-    args: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
-  });
-  
-  // 6) Flexible with cookies (restricted content)
+
+  // Attempt 3: Flexible Merge with Cookies.
+  // For age-restricted or members-only content.
   if (cookiesPath) {
     attempts.push({
-      name: 'Flexible Fallback with Cookies',
+      name: 'Flexible Merge with Cookies',
       useCookies: true,
-      ua: desktopUA,
-      args: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
-    });
-    
-    // 7) TV client with cookies
-    attempts.push({
-      name: 'TV Client with Cookies',
-      useCookies: true,
-      ua: tvUA,
-      args: ['--add-header','Referer:https://www.youtube.com','-f','best[ext=mp4]/best','--extractor-args','youtube:player_client=tv_embedded']
+      args: ['-f', 'bestvideo*+bestaudio/best', '--merge-output-format', 'mp4']
     });
   }
 
@@ -140,7 +107,7 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
     for (let i = 0; i < attempts.length; i++) {
       const a = attempts[i]!;
-      const args = [...base, ...a.args, '--user-agent', a.ua, url];
+      const args = [...base, '--add-header', 'Referer:https://www.youtube.com', '--user-agent', desktopUA, ...a.args, url];
       if (a.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
       if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (youtube)', { attempt: a.name, args });
       const result = await run('yt-dlp', args, { timeout: 600000 });
