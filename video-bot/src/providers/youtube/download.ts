@@ -107,6 +107,13 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     useCookies: !!cookiesPath,
     format: ['--add-header','Referer:https://m.youtube.com','--extractor-args','youtube:player_client=android','-f','best[ext=mp4]/best','--merge-output-format','mp4']
   });
+  // Attempt 6: Progressive only, no postprocessing at all (last resort)
+  attempts.push({
+    target: url,
+    ua: desktopUA,
+    useCookies: !!cookiesPath,
+    format: ['--add-header','Referer:https://www.youtube.com','-f','best[ext=mp4]/best']
+  });
 
   try {
     let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
