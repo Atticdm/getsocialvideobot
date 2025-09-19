@@ -71,68 +71,59 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     }
   }
 
-  type Attempt = { useCookies: boolean; ua: string; target: string; format: string[] };
+  // Refactored attempts à la MeTube: fewer, more powerful strategies
+  type Attempt = { name: string; useCookies: boolean; ua: string; args: string[] };
   const desktopUA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const mobileUA = 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
   const attempts: Attempt[] = [];
-  // Attempt 1: Prefer H264/AAC that Telegram handles best
+  // 1) Standard Merge (bestvideo+audio with fallbacks to mp4/best)
   attempts.push({
-    target: url,
-    ua: desktopUA,
+    name: 'Standard Merge',
     useCookies: false,
-    format: ['--add-header','Referer:https://www.youtube.com','-f', 'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]','--merge-output-format','mp4']
-  });
-  // Attempt 2: Any bestvideo+audio, then merge to mp4
-  attempts.push({
-    target: url,
     ua: desktopUA,
-    useCookies: false,
-    format: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
+    args: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best','--merge-output-format','mp4']
   });
-  // Attempt 3: Mobile UA may expose progressive MP4
+  // 2) Mobile/Shorts (android client)
   attempts.push({
-    target: url,
+    name: 'Mobile/Shorts',
+    useCookies: false,
     ua: mobileUA,
-    useCookies: false,
-    format: ['--add-header','Referer:https://m.youtube.com','-f','best[ext=mp4]/best','--remux-video','mp4']
+    args: ['--add-header','Referer:https://m.youtube.com','-f','best[ext=mp4]/best','--extractor-args','youtube:player_client=android']
   });
-  // Attempt 4: With cookies (if provided)
+  // 3) Flexible fallback (allow any containers, remux to mp4)
+  attempts.push({
+    name: 'Flexible Fallback',
+    useCookies: false,
+    ua: desktopUA,
+    args: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
+  });
+  // 4) Flexible with cookies (restricted content)
   if (cookiesPath) {
-    attempts.push({ target: url, ua: desktopUA, useCookies: true, format: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4'] });
+    attempts.push({
+      name: 'Flexible Fallback with Cookies',
+      useCookies: true,
+      ua: desktopUA,
+      args: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
+    });
   }
-  // Attempt 5: Force android client extractor (sometimes helps for Shorts)
-  attempts.push({
-    target: url,
-    ua: mobileUA,
-    useCookies: !!cookiesPath,
-    format: ['--add-header','Referer:https://m.youtube.com','--extractor-args','youtube:player_client=android','-f','best[ext=mp4]/best','--merge-output-format','mp4']
-  });
-  // Attempt 6: Progressive only, no postprocessing at all (last resort)
-  attempts.push({
-    target: url,
-    ua: desktopUA,
-    useCookies: !!cookiesPath,
-    format: ['--add-header','Referer:https://www.youtube.com','-f','best[ext=mp4]/best']
-  });
 
   try {
     let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
     for (let i = 0; i < attempts.length; i++) {
       const a = attempts[i]!;
-      const args = [...base, ...a.format, '--user-agent', a.ua];
+      const args = [...base, ...a.args, '--user-agent', a.ua, url];
       if (a.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
-      args.push(a.target);
-      if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (youtube)', { args });
+      if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (youtube)', { attempt: a.name, args });
       const result = await run('yt-dlp', args, { timeout: 600000 });
       last = result;
       if (result.code === 0) {
         const filePath = await findDownloadedFile(outDir);
-        if (!filePath) throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Downloaded file not found', { url: a.target, outDir });
-        const info = parseVideoInfoFromPath(filePath, a.target);
-        logger.info('YouTube video downloaded successfully', { url: a.target, filePath, info });
+        if (!filePath) throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Downloaded file not found', { url, outDir });
+        const info = parseVideoInfoFromPath(filePath, url);
+        logger.info('YouTube video downloaded successfully', { attempt: a.name, url, filePath, info });
         return { filePath, videoInfo: info };
       }
-      logger.warn('yt-dlp attempt failed (youtube)', { attempt: i + 1, code: result.code, stderrPreview: (result.stderr||'').slice(0,1200) });
+      logger.warn('yt-dlp attempt failed (youtube)', { attempt: a.name, index: i + 1, code: result.code, stderrPreview: (result.stderr||'').slice(0,1200) });
     }
 
     const stderrPreview = (last?.stderr || '').slice(0, 1200);
