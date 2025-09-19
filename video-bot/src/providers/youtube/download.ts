@@ -49,6 +49,7 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     '--retries', '3',
     '--fragment-retries', '10',
     '--sleep-requests', '1',
+    '--ignore-config',
     '--postprocessor-args', 'ffmpeg:-movflags +faststart',
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
   ];
@@ -79,26 +80,33 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     target: url,
     ua: desktopUA,
     useCookies: false,
-    format: ['-f', 'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]','--merge-output-format','mp4']
+    format: ['--add-header','Referer:https://www.youtube.com','-f', 'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]','--merge-output-format','mp4']
   });
   // Attempt 2: Any bestvideo+audio, then merge to mp4
   attempts.push({
     target: url,
     ua: desktopUA,
     useCookies: false,
-    format: ['-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
+    format: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
   });
   // Attempt 3: Mobile UA may expose progressive MP4
   attempts.push({
     target: url,
     ua: mobileUA,
     useCookies: false,
-    format: ['-f','best[ext=mp4]/best','--remux-video','mp4']
+    format: ['--add-header','Referer:https://m.youtube.com','-f','best[ext=mp4]/best','--remux-video','mp4']
   });
   // Attempt 4: With cookies (if provided)
   if (cookiesPath) {
-    attempts.push({ target: url, ua: desktopUA, useCookies: true, format: ['-f','bestvideo*+bestaudio/best','--merge-output-format','mp4'] });
+    attempts.push({ target: url, ua: desktopUA, useCookies: true, format: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4'] });
   }
+  // Attempt 5: Force android client extractor (sometimes helps for Shorts)
+  attempts.push({
+    target: url,
+    ua: mobileUA,
+    useCookies: !!cookiesPath,
+    format: ['--add-header','Referer:https://m.youtube.com','--extractor-args','youtube:player_client=android','-f','best[ext=mp4]/best','--merge-output-format','mp4']
+  });
 
   try {
     let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
@@ -117,7 +125,7 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
         logger.info('YouTube video downloaded successfully', { url: a.target, filePath, info });
         return { filePath, videoInfo: info };
       }
-      logger.warn('yt-dlp attempt failed (youtube)', { attempt: i + 1, code: result.code });
+      logger.warn('yt-dlp attempt failed (youtube)', { attempt: i + 1, code: result.code, stderrPreview: (result.stderr||'').slice(0,1200) });
     }
 
     const stderrPreview = (last?.stderr || '').slice(0, 1200);
