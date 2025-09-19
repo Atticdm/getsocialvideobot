@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to Chrome (Profile 6 @9222)",
+      "type": "pwa-chrome",
+      "request": "attach",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true,
+      "sourceMapPathOverrides": {
+        "webpack:///src/*": "${workspaceFolder}/src/*",
+        "webpack:///*": "${workspaceFolder}/*",
+        "webpack:///./*": "${workspaceFolder}/*",
+        "vite:///*": "${workspaceFolder}/*",
+        "ng:///*": "${workspaceFolder}/*"
+      }
+    }
+    {
+      "name": "Debug Railway (Chrome Profile 6)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "https://zoological-rejoicing-production.up.railway.app/",
+      "webRoot": "${workspaceFolder}",
+      "userDataDir": "/Users/attic/Library/Application Support/Google/Chrome/Profile 6",
+      "runtimeArgs": [
+        "--profile-directory=Profile 6"
+      ],
+      "sourceMaps": true,
+      "sourceMapPathOverrides": {
+        "webpack:///src/*": "${workspaceFolder}/src/*",
+        "webpack:///*": "${workspaceFolder}/*",
+        "webpack:///./*": "${workspaceFolder}/*",
+        "vite:///*": "${workspaceFolder}/*",
+        "ng:///*": "${workspaceFolder}/*"
+      }
+    }
+  ]
+}

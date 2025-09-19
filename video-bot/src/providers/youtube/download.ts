@@ -8,7 +8,7 @@ import { config } from '../../core/config';
 
 function mapYtDlpError(stderr: string): string {
   const s = (stderr || '').toLowerCase();
-  if (s.includes('login') || s.includes('private') || s.includes('sign in')) return ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED;
+  if (s.includes('login') || s.includes('private') || s.includes('sign in') || s.includes('age') || s.includes('restricted') || s.includes('members-only')) return ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED;
   if (s.includes('http error 4') || s.includes('429') || s.includes('rate limit')) return ERROR_CODES.ERR_FETCH_FAILED;
   if (s.includes('unsupported url') || s.includes('no video formats') || s.includes('video unavailable')) return ERROR_CODES.ERR_UNSUPPORTED_URL;
   if (s.includes('geo') || s.includes('blocked')) return ERROR_CODES.ERR_GEO_BLOCKED;
@@ -71,11 +71,13 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     }
   }
 
-  // Refactored attempts à la MeTube: fewer, more powerful strategies
+  // Enhanced attempts with more strategies for better success rate
   type Attempt = { name: string; useCookies: boolean; ua: string; args: string[] };
   const desktopUA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const mobileUA = 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+  const tvUA = 'Mozilla/5.0 (Linux; Tizen 2.3) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.3 TV Safari/538.1';
   const attempts: Attempt[] = [];
+  
   // 1) Standard Merge (bestvideo+audio with fallbacks to mp4/best)
   attempts.push({
     name: 'Standard Merge',
@@ -83,6 +85,7 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     ua: desktopUA,
     args: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best','--merge-output-format','mp4']
   });
+  
   // 2) Mobile/Shorts (android client)
   attempts.push({
     name: 'Mobile/Shorts',
@@ -90,20 +93,46 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     ua: mobileUA,
     args: ['--add-header','Referer:https://m.youtube.com','-f','best[ext=mp4]/best','--extractor-args','youtube:player_client=android']
   });
-  // 3) Flexible fallback (allow any containers, remux to mp4)
+  
+  // 3) TV client (often bypasses some restrictions)
+  attempts.push({
+    name: 'TV Client',
+    useCookies: false,
+    ua: tvUA,
+    args: ['--add-header','Referer:https://www.youtube.com','-f','best[ext=mp4]/best','--extractor-args','youtube:player_client=tv_embedded']
+  });
+  
+  // 4) iOS client (different user agent)
+  attempts.push({
+    name: 'iOS Client',
+    useCookies: false,
+    ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+    args: ['--add-header','Referer:https://www.youtube.com','-f','best[ext=mp4]/best','--extractor-args','youtube:player_client=ios']
+  });
+  
+  // 5) Flexible fallback (allow any containers, remux to mp4)
   attempts.push({
     name: 'Flexible Fallback',
     useCookies: false,
     ua: desktopUA,
     args: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
   });
-  // 4) Flexible with cookies (restricted content)
+  
+  // 6) Flexible with cookies (restricted content)
   if (cookiesPath) {
     attempts.push({
       name: 'Flexible Fallback with Cookies',
       useCookies: true,
       ua: desktopUA,
       args: ['--add-header','Referer:https://www.youtube.com','-f','bestvideo*+bestaudio/best','--merge-output-format','mp4']
+    });
+    
+    // 7) TV client with cookies
+    attempts.push({
+      name: 'TV Client with Cookies',
+      useCookies: true,
+      ua: tvUA,
+      args: ['--add-header','Referer:https://www.youtube.com','-f','best[ext=mp4]/best','--extractor-args','youtube:player_client=tv_embedded']
     });
   }
 

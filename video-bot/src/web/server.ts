@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { detectProvider, getProvider } from '../providers';
 import { ensureTempDir, makeSessionDir, safeRemove } from '../core/fs';
 import { logger } from '../core/logger';
-// import { AppError } from '../core/errors';
+import { AppError, toUserMessage } from '../core/errors';
 import { ensureBelowLimit } from '../core/size';
 // NOTE: AppError types are used in provider layer; web job converts to plain message
 import * as path from 'path';
@@ -128,34 +128,8 @@ fastify.get('/', async (req, reply) => {
 
       async function start(url){
         if(!url){ statusEl.textContent = 'Enter URL'; return; }
-        statusEl.textContent = 'Starting…';
-        try{
-          const r = await fetch('/api/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ url }) });
-          const j = await r.json();
-          if(!j.id){ statusEl.textContent = j.error || 'Failed to start'; return; }
-          poll(j.id);
-        }catch(e){ statusEl.textContent = 'Failed to start'; }
-      }
-
-      async function poll(id){
-        try{
-          const r = await fetch('/status?id='+encodeURIComponent(id), { cache:'no-store' });
-          const j = await r.json();
-          if(j.status==='ready'){
-            statusEl.textContent = 'Ready. Downloading…';
-            // prefer anchor with download attribute to avoid iframe cancellations
-            const a = document.createElement('a');
-            a.href = '/file/'+id; a.download = '';
-            a.style.display='none'; document.body.appendChild(a); a.click();
-            // keep polling a couple more times to ensure no error state flips
-            return;
-          }
-          if(j.status==='error'){
-            statusEl.textContent = 'Error'+(j.errorCode ? ' ('+j.errorCode+')' : '')+': '+(j.error || 'failed');
-            return;
-          }
-        }catch(e){ /* network glitch; retry */ }
-        setTimeout(()=>poll(id), 1200);
+        statusEl.textContent = 'Preparing download… This may take a minute.';
+        window.location.href = '/download_video?url=' + encodeURIComponent(url);
       }
 
       if(initUrl){
@@ -165,7 +139,59 @@ fastify.get('/', async (req, reply) => {
     </script>
   </body>
   </html>`;
+  reply.header('Cache-Control','no-store');
   reply.type('text/html').send(html);
+});
+
+// Single-request download endpoint: download then stream in same response
+fastify.get('/download_video', async (req, reply) => {
+  const url = (req.query as any)?.url as string | undefined;
+  if (!url) return reply.code(400).send({ error: 'Missing url' });
+
+  await ensureTempDir();
+  const sessionDir = await makeSessionDir();
+  let filePath: string | undefined;
+  try {
+    const providerName = detectProvider(url);
+    if (!providerName) return reply.code(400).send({ error: 'Unsupported provider' });
+    const provider = getProvider(providerName);
+    const result = await provider.download(url, sessionDir);
+    filePath = result.filePath;
+    await ensureBelowLimit(filePath);
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(fileName).toLowerCase();
+    const mime = ext === '.mp4' ? 'video/mp4' : ext === '.webm' ? 'video/webm' : ext === '.mkv' ? 'video/x-matroska' : 'application/octet-stream';
+    const st = await fs.stat(filePath);
+
+    reply.header('X-Accel-Buffering', 'no');
+    reply.header('Cache-Control', 'no-store');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Content-Type', mime);
+    reply.header('Content-Length', String(st.size));
+    reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    const stream = createReadStream(filePath);
+    const done = new Promise<void>((resolve) => {
+      stream.on('close', () => resolve());
+      stream.on('error', () => resolve());
+      reply.raw.on('close', () => resolve());
+      reply.raw.on('finish', () => resolve());
+    });
+    
+    reply.send(stream);
+    await done;
+    
+    // Clean up after streaming is complete
+    if (sessionDir) await safeRemove(sessionDir).catch(() => undefined);
+  } catch (e: any) {
+    logger.error('download_video failed', { url, message: e?.message, code: e?.code, details: e?.details });
+    if (e instanceof AppError) return reply.code(400).send({ error: toUserMessage(e) });
+    return reply.code(500).send({ error: 'Internal server error' });
+  } finally {
+    // Only clean up if there was an error before streaming started
+    if (sessionDir && !filePath) await safeRemove(sessionDir).catch(() => undefined);
+  }
 });
 
 // Kick off job, return progress page that polls /status and redirects to /file/:id when ready
