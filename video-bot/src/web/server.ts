@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { detectProvider, getProvider } from '../providers';
 import { ensureTempDir, makeSessionDir, safeRemove } from '../core/fs';
 import { logger } from '../core/logger';
+// import { AppError } from '../core/errors';
 import { ensureBelowLimit } from '../core/size';
 // NOTE: AppError types are used in provider layer; web job converts to plain message
 import * as path from 'path';
@@ -53,8 +54,16 @@ async function startJob(url: string): Promise<Job> {
       job.fileName = path.basename(result.filePath);
       job.status = 'ready';
     } catch (e: any) {
-      logger.warn('Job failed', { url, error: e?.message || String(e) });
+      logger.warn('Job failed', { url, error: e?.message || String(e), code: e?.code, details: e?.details ? 'has_details' : 'none' });
       job.error = e?.message || 'Failed';
+      if (e && e.code) (job as any).errorCode = e.code;
+      // Try propagate stderr preview to UI for faster diagnostics
+      try {
+        const stderr = e?.details?.stderr || e?.stderr;
+        if (stderr && typeof stderr === 'string') {
+          job.error += ' — ' + String(stderr).slice(0, 300);
+        }
+      } catch {}
       job.status = 'error';
     }
   })().catch((e) => {
@@ -221,20 +230,8 @@ fastify.get('/file/:id', async (req, reply) => {
       scheduleCleanup(job);
     };
 
-    // Build headers
-    const headers: Record<string, string> = {
-      'X-Accel-Buffering': 'no',
-      'Accept-Ranges': 'bytes',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-      'Content-Type': mime,
-      'Content-Disposition': `attachment; filename="${fileName}"`,
-    };
-
+    // Standard Fastify streaming (no hijack)
     reply.raw.setTimeout(10 * 60 * 1000);
-    reply.hijack(); // we will manage the stream ourselves
-
-    let status = 200;
     let stream: any;
     if (range) {
       const m = range.match(/bytes=(\d*)-(\d*)/);
@@ -243,23 +240,25 @@ fastify.get('/file/:id', async (req, reply) => {
         const end = m[2] ? Math.min(parseInt(m[2], 10), total - 1) : total - 1;
         const chunk = end - start + 1;
         logger.debug('file route range', { id, start, end, chunk });
-        headers['Content-Range'] = `bytes ${start}-${end}/${total}`;
-        headers['Content-Length'] = String(chunk);
-        status = 206;
+        reply.code(206);
+        reply.header('Content-Range', `bytes ${start}-${end}/${total}`);
+        reply.header('Content-Length', String(chunk));
+        reply.header('Content-Type', mime);
+        reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
         stream = createReadStream(filePath, { start, end });
       }
     }
     if (!stream) {
-      headers['Content-Length'] = String(total);
+      reply.code(200);
+      reply.header('Content-Length', String(total));
+      reply.header('Content-Type', mime);
+      reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
       stream = createReadStream(filePath);
     }
 
-    // write headers and pipe
-    try { reply.raw.writeHead(status, headers); } catch (e: any) { logger.error('writeHead failed', { id, message: e?.message }); onClose(); return; }
     stream.on('error', (e: any) => { logger.warn('stream error (client likely aborted)', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; onClose(); });
     stream.on('close', onClose);
-    stream.pipe(reply.raw);
-    return;
+    return reply.send(stream);
   } catch (e) {
     const err: any = e;
     logger.error('file route failed', { id, message: err?.message, code: err?.code, stack: err?.stack });
