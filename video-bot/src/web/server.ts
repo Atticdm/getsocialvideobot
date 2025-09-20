@@ -4,6 +4,7 @@ import { ensureTempDir, makeSessionDir, safeRemove } from '../core/fs';
 import { logger } from '../core/logger';
 import { AppError, toUserMessage } from '../core/errors';
 import { ensureBelowLimit } from '../core/size';
+import { run } from '../core/exec';
 // NOTE: AppError types are used in provider layer; web job converts to plain message
 import * as path from 'path';
 import * as fs from 'fs-extra';
@@ -146,6 +147,7 @@ fastify.get('/', async (req, reply) => {
 // Single-request download endpoint: download then stream in same response
 fastify.get('/download_video', async (req, reply) => {
   const url = (req.query as any)?.url as string | undefined;
+  logger.info('DEBUG: download_video called', { url, query: req.query });
   if (!url) return reply.code(400).send({ error: 'Missing url' });
 
   await ensureTempDir();
@@ -153,9 +155,12 @@ fastify.get('/download_video', async (req, reply) => {
   let filePath: string | undefined;
   try {
     const providerName = detectProvider(url);
+    logger.info('DEBUG: provider detected', { providerName, url });
     if (!providerName) return reply.code(400).send({ error: 'Unsupported provider' });
     const provider = getProvider(providerName);
+    logger.info('DEBUG: starting download', { providerName, sessionDir });
     const result = await provider.download(url, sessionDir);
+    logger.info('DEBUG: download completed', { filePath: result.filePath, videoInfo: result.videoInfo });
     filePath = result.filePath;
     await ensureBelowLimit(filePath);
 
@@ -293,6 +298,17 @@ fastify.get('/file/:id', async (req, reply) => {
 });
 
 export async function start() {
+  try {
+    const ytdlpVersion = await run('yt-dlp', ['--version']);
+    const ffmpegVersion = await run('ffmpeg', ['-version']);
+    logger.info({
+      'yt-dlp': ytdlpVersion.stdout.trim(),
+      'ffmpeg': ffmpegVersion.stdout.split('\n')[0],
+    }, 'Tool versions');
+  } catch (e) {
+    logger.error(e, 'Failed to check tool versions on startup');
+  }
+
   await fastify.listen({ port: PORT, host: '0.0.0.0' });
   logger.info('Web server started', { port: PORT });
 }

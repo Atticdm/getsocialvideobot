@@ -1,6 +1,7 @@
 {
   "version": "0.2.0",
   "configurations": [
+
     {
       "name": "Attach to Chrome (Profile 6 @9222)",
       "type": "pwa-chrome",
@@ -34,6 +35,22 @@
         "vite:///*": "${workspaceFolder}/*",
         "ng:///*": "${workspaceFolder}/*"
       }
+    }
+    {
+      "name": "Node: server.ts (ts-node)",
+      "type": "pwa-node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/video-bot",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--inspect=9229",
+        "--require",
+        "ts-node/register/transpile-only",
+        "src/web/server.ts"
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
     }
   ]
 }

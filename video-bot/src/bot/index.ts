@@ -2,6 +2,7 @@ import { Telegraf } from 'telegraf';
 import { config } from '../core/config';
 import { logger } from '../core/logger';
 import { ensureTempDir } from '../core/fs';
+import { run } from '../core/exec';
 import { startCommand } from './commands/start';
 import { helpCommand } from './commands/help';
 import { statusCommand } from './commands/status';
@@ -14,6 +15,17 @@ async function main(): Promise<void> {
       nodeEnv: config.NODE_ENV,
       version: process.env['npm_package_version'] || '1.0.0'
     });
+
+    try {
+      const ytdlpVersion = await run('yt-dlp', ['--version']);
+      const ffmpegVersion = await run('ffmpeg', ['-version']);
+      logger.info({
+        'yt-dlp': ytdlpVersion.stdout.trim(),
+        'ffmpeg': ffmpegVersion.stdout.split('\n')[0],
+      }, 'Tool versions');
+    } catch (e) {
+      logger.error(e, 'Failed to check tool versions on startup');
+    }
 
     // Ensure temporary directory exists
     await ensureTempDir();
