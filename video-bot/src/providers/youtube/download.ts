@@ -22,12 +22,17 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
   const base = [
     '--no-playlist',
     '--geo-bypass',
+    '--no-mtime', // Use server time, not original file time
     '-4',
     '--retries', '3',
     '--fragment-retries', '5',
     '--sleep-requests', '1',
     '--ignore-config',
-    '--postprocessor-args', 'ffmpeg:-movflags +faststart',
+    // Embed metadata and thumbnail into the file
+    '--embed-metadata',
+    '--embed-thumbnail',
+    // Use a generic postprocessor argument format
+    '--ppa', 'ffmpeg:-movflags +faststart',
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
   ];
   if (config.GEO_BYPASS_COUNTRY) base.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
@@ -50,20 +55,12 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
   const attempts: Attempt[] = [];
 
   // Attempt 1: Flexible Merge (Most Reliable).
-  // Selects best video and audio streams regardless of container, then merges to a compatible MP4.
   attempts.push({
     name: 'Flexible Merge',
     args: ['-f', 'bestvideo*+bestaudio/best', '--merge-output-format', 'mp4'],
   });
 
-  // Attempt 2: Progressive Fallback.
-  // Good for lower-quality, pre-merged content.
-  attempts.push({
-    name: 'Progressive Fallback',
-    args: ['-f', 'best[ext=mp4]/best'],
-  });
-
-  // Attempt 3: Flexible Merge with Cookies (for restricted content).
+  // Attempt 2: Flexible Merge with Cookies (for restricted content).
   if (cookiesPath) {
     attempts.push({
       name: 'Flexible Merge with Cookies',

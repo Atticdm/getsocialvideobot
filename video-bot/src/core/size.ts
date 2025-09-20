@@ -9,14 +9,16 @@ export function bytesToMB(bytes: number): number {
 
 export async function ensureBelowLimit(filePath: string, maxFileMB: number = config.MAX_FILE_MB): Promise<void> {
   try {
+    logger.debug('Checking file existence', { filePath });
     const exists = await fs.pathExists(filePath);
     if (!exists) {
       throw new AppError(ERROR_CODES.ERR_FILE_NOT_FOUND, 'File not found for size check', { filePath });
     }
+    logger.debug('File exists, getting stats', { filePath });
     const stats = await fs.stat(filePath);
     const fileSizeMB = bytesToMB(stats.size);
     
-    logger.debug('File size check', { 
+    logger.debug('File size check successful', { 
       filePath, 
       sizeBytes: stats.size, 
       sizeMB: fileSizeMB, 
@@ -37,15 +39,16 @@ export async function ensureBelowLimit(filePath: string, maxFileMB: number = con
     }
   } catch (error) {
     if (error instanceof AppError) {
-      logger.error('File size check error', { error: error.message, code: error.code, details: (error as any).details });
+      logger.error('AppError during size check', { code: error.code, message: error.message, details: error.details });
       throw error;
     }
-
-    logger.error('Failed to check file size', { error, filePath });
+    
+    const err = error as Error;
+    logger.error('Generic error during size check', { error: err.message, name: err.name, stack: err.stack, filePath });
     throw new AppError(
       ERROR_CODES.ERR_INTERNAL,
       'Failed to check file size',
-      { filePath, originalError: error }
+      { filePath, originalError: err.message }
     );
   }
 }
