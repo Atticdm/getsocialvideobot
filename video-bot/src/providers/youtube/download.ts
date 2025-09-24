@@ -23,7 +23,7 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     '--no-playlist',
     '--geo-bypass',
     '--no-mtime',
-    '--ffmpeg-location', process.env.FFMPEG_PATH || '/usr/bin/ffmpeg', // Explicitly provide ffmpeg path to ensure merging works
+    '--ffmpeg-location', process.env['FFMPEG_PATH'] || '/usr/bin/ffmpeg', // Explicitly provide ffmpeg path to ensure merging works
     '--sponsorblock-remove', 'all', // Skip sponsors, intros, etc.
     '--max-filesize', '2G', // Safety limit
     '-4',
