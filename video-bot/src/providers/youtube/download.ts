@@ -22,16 +22,16 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
   const base = [
     '--no-playlist',
     '--geo-bypass',
-    '--no-mtime', // Use server time, not original file time
+    '--no-mtime',
+    '--ffmpeg-location', process.env.FFMPEG_PATH || '/usr/bin/ffmpeg', // Explicitly provide ffmpeg path to ensure merging works
+    '--sponsorblock-remove', 'all', // Skip sponsors, intros, etc.
+    '--max-filesize', '2G', // Safety limit
     '-4',
     '--retries', '3',
     '--fragment-retries', '5',
-    '--sleep-requests', '1',
     '--ignore-config',
-    // Embed metadata and thumbnail into the file
     '--embed-metadata',
     '--embed-thumbnail',
-    // Use a generic postprocessor argument format
     '--ppa', 'ffmpeg:-movflags +faststart',
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
   ];
@@ -92,6 +92,15 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
         logger.info({ filePath, size: stats.size }, 'Downloaded file stats');
 
         const info = parseVideoInfoFromPath(filePath, url);
+        // Final check: if we got an audio file, it's a failure for the user.
+        if (['.m4a', '.mp3', '.opus'].includes(path.extname(filePath).toLowerCase())) {
+            logger.warn('Merge likely failed, only an audio file was found', { filePath });
+            // Continue to the next attempt if possible
+            if (i < attempts.length - 1) continue;
+            // Or fail if this was the last attempt
+            throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to merge video and audio, only audio was downloaded.', { url, outDir });
+        }
+
         logger.info('YouTube video downloaded successfully', { attempt: a.name, url, filePath, info });
         return { filePath, videoInfo: info };
       }
