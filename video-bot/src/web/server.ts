@@ -1,10 +1,12 @@
 import Fastify from 'fastify';
+import { createHash } from 'crypto';
 import { detectProvider, getProvider } from '../providers';
 import { ensureTempDir, makeSessionDir, safeRemove } from '../core/fs';
 import { logger } from '../core/logger';
 import { AppError, toUserMessage } from '../core/errors';
 import { ensureBelowLimit } from '../core/size';
 import { run } from '../core/exec';
+import { withCache } from '../core/cache';
 // NOTE: AppError types are used in provider layer; web job converts to plain message
 import * as path from 'path';
 import * as fs from 'fs-extra';
@@ -196,6 +198,34 @@ fastify.get('/download_video', async (req, reply) => {
   } finally {
     // Only clean up if there was an error before streaming started
     if (sessionDir && !filePath) await safeRemove(sessionDir).catch(() => undefined);
+  }
+});
+
+fastify.post('/get-video-link', async (req, reply) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const rawUrlValue = body['url'];
+  const rawUrl = typeof rawUrlValue === 'string' ? rawUrlValue.trim() : '';
+  if (!rawUrl) return reply.code(400).send({ error: 'Missing url' });
+
+  const providerName = detectProvider(rawUrl);
+  if (!providerName) return reply.code(400).send({ error: 'Unsupported provider' });
+
+  const cacheKey = `metadata:${providerName}:${createHash('sha1').update(rawUrl).digest('hex')}`;
+
+  try {
+    const metadata = await withCache(cacheKey, async () => {
+      const provider = getProvider(providerName);
+      logger.info('Resolving metadata', { url: rawUrl, provider: providerName });
+      return provider.metadata(rawUrl);
+    });
+
+    return reply.send(metadata);
+  } catch (error) {
+    if (error instanceof AppError) {
+      return reply.code(400).send({ error: toUserMessage(error) });
+    }
+    logger.error('get-video-link failed', { url: rawUrl, error });
+    return reply.code(500).send({ error: 'Internal server error' });
   }
 });
 

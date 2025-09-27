@@ -1,9 +1,10 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import * as os from 'os';
 import { run } from '../../core/exec';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
-import { VideoInfo, DownloadResult } from '../types';
+import { VideoInfo, DownloadResult, VideoMetadata } from '../types';
 import { config } from '../../core/config';
 
 function extractReelCode(u: string): string | null {
@@ -36,6 +37,8 @@ function mapYtDlpError(stderr: string): string {
   return ERROR_CODES.ERR_INTERNAL;
 }
 
+type Attempt = { target: string; referer: string; ua: string; useCookies: boolean };
+
 function parseVideoInfoFromPath(filePath: string, url: string): VideoInfo {
   const fileName = path.basename(filePath);
   const ext = path.extname(fileName);
@@ -62,11 +65,7 @@ async function findDownloadedFile(outDir: string): Promise<string | null> {
   return stats[0]?.p || null;
 }
 
-export async function downloadInstagramVideo(url: string, outDir: string): Promise<DownloadResult> {
-  const normalizedUrl = normalizeReelUrl(url);
-  logger.info('Starting Instagram video download', { url, normalizedUrl, outDir });
-
-  // Base args; keep minimal at first like when it worked
+function createBaseArgs(outDir: string): string[] {
   const base = [
     '--no-playlist',
     '--geo-bypass',
@@ -79,23 +78,25 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
   ];
   if (config.GEO_BYPASS_COUNTRY) base.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
   if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') base.unshift('-v');
+  return base;
+}
 
-  // Prepare cookies for later attempts only
-  let cookiesPath: string | undefined;
+async function prepareInstagramCookies(outDir: string): Promise<string | undefined> {
   const canUseCookies = !!config['INSTAGRAM_COOKIES_B64'] && !config['SKIP_COOKIES'];
-  if (canUseCookies) {
-    try {
-      const buf = Buffer.from(config['INSTAGRAM_COOKIES_B64'], 'base64');
-      cookiesPath = path.join(outDir, 'ig_cookies.txt');
-      await fs.writeFile(cookiesPath, buf);
-      logger.info('Instagram cookies detected');
-    } catch (e) {
-      logger.warn('Failed to write Instagram cookies, proceeding without', { error: e });
-      cookiesPath = undefined;
-    }
+  if (!canUseCookies) return undefined;
+  try {
+    const buf = Buffer.from(config['INSTAGRAM_COOKIES_B64'], 'base64');
+    const cookiesPath = path.join(outDir, 'ig_cookies.txt');
+    await fs.writeFile(cookiesPath, buf);
+    logger.info('Instagram cookies detected');
+    return cookiesPath;
+  } catch (error) {
+    logger.warn('Failed to write Instagram cookies, proceeding without', { error });
+    return undefined;
   }
+}
 
-  type Attempt = { target: string; referer: string; ua: string; useCookies: boolean };
+function buildInstagramAttempts(url: string, normalizedUrl: string, cookiesPath?: string): Attempt[] {
   const desktopUA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const mobileUA = 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
@@ -103,16 +104,24 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
   const mobileUrl = code ? `https://m.instagram.com/reel/${code}/` : undefined;
 
   const attempts: Attempt[] = [];
-  // Try without cookies first
   attempts.push({ target: url, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: false });
   attempts.push({ target: normalizedUrl, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: false });
   if (mobileUrl) attempts.push({ target: mobileUrl, referer: 'https://m.instagram.com/', ua: mobileUA, useCookies: false });
-  // Then with cookies if available
   if (cookiesPath) {
     attempts.push({ target: url, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: true });
     attempts.push({ target: normalizedUrl, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: true });
     if (mobileUrl) attempts.push({ target: mobileUrl, referer: 'https://m.instagram.com/', ua: mobileUA, useCookies: true });
   }
+  return attempts;
+}
+
+export async function downloadInstagramVideo(url: string, outDir: string): Promise<DownloadResult> {
+  const normalizedUrl = normalizeReelUrl(url);
+  logger.info('Starting Instagram video download', { url, normalizedUrl, outDir });
+
+  const base = createBaseArgs(outDir);
+  const cookiesPath = await prepareInstagramCookies(outDir);
+  const attempts = buildInstagramAttempts(url, normalizedUrl, cookiesPath);
 
   try {
     let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
@@ -144,4 +153,67 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
     logger.error('Unexpected error during Instagram download', { error, url, outDir });
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Unexpected error during download', { url, originalError: error });
   }
+}
+
+export async function fetchInstagramMetadata(url: string): Promise<VideoMetadata> {
+  logger.info('Fetching Instagram metadata', { url });
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ig-meta-'));
+  try {
+    const normalizedUrl = normalizeReelUrl(url);
+    const cookiesPath = await prepareInstagramCookies(tempDir);
+    const attempts = buildInstagramAttempts(url, normalizedUrl, cookiesPath);
+    const base = createBaseArgs(tempDir);
+
+    let lastError: AppError | Error | null = null;
+    for (const attempt of attempts) {
+      const args = [...base, '--dump-single-json', '--skip-download', '--add-header', `Referer:${attempt.referer}`, '--user-agent', attempt.ua];
+      if (attempt.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
+      args.push(attempt.target);
+
+      const result = await run('yt-dlp', args, { timeout: 240000 });
+      if (result.code === 0) {
+        try {
+          const parsed = JSON.parse(result.stdout || '{}');
+          const metadata = extractMetadata(parsed, attempt.target);
+          if (!metadata.downloadUrl) throw new Error('downloadUrl missing');
+          return metadata;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          logger.warn('Failed to parse Instagram metadata JSON', { url: attempt.target, error: lastError.message });
+        }
+      } else {
+        lastError = new AppError(mapYtDlpError(result.stderr), 'Metadata attempt failed', { url: attempt.target, stderr: result.stderr, code: result.code });
+      }
+    }
+
+    if (lastError instanceof AppError) throw lastError;
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to resolve Instagram metadata', { url, lastError: lastError?.message });
+  } finally {
+    try { await fs.remove(tempDir); } catch (error) {
+      logger.warn('Failed to cleanup temp dir after Instagram metadata', { url, error });
+    }
+  }
+}
+
+function extractMetadata(json: any, fallbackUrl: string): VideoMetadata {
+  const requested = Array.isArray(json?.requested_downloads) && json.requested_downloads.length > 0 ? json.requested_downloads[0] : null;
+  const downloadUrl: string | undefined = requested?.url || json?.url;
+  const fileSize: number | undefined = requested?.filesize || requested?.filesizeApprox || json?.filesize || json?.filesizeApprox;
+  const duration: number | undefined = json?.duration || requested?.duration;
+  const title: string = json?.title || requested?.title || 'Instagram video';
+  let thumbnail: string | undefined;
+  if (typeof json?.thumbnail === 'string') thumbnail = json.thumbnail;
+  else if (Array.isArray(json?.thumbnails) && json.thumbnails.length) {
+    const best = json.thumbnails[json.thumbnails.length - 1];
+    if (best?.url) thumbnail = best.url;
+  }
+
+  const metadata: VideoMetadata = {
+    downloadUrl: downloadUrl || fallbackUrl,
+    title,
+  };
+  if (typeof duration === 'number' && !Number.isNaN(duration)) metadata.duration = duration;
+  if (typeof fileSize === 'number' && fileSize > 0) metadata.fileSize = fileSize;
+  if (thumbnail) metadata.thumbnail = thumbnail;
+  return metadata;
 }

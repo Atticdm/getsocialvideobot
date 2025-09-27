@@ -1,11 +1,57 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import * as os from 'os';
 import { run } from '../../core/exec';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
-import { DownloadResult } from '../types';
+import { DownloadResult, VideoMetadata } from '../types';
 import { config } from '../../core/config';
 import { findDownloadedFile, parseVideoInfoFromPath } from '../utils';
+
+type YouTubeArgsOptions = {
+  cookiesPath?: string;
+  extra?: string[];
+};
+
+async function prepareYouTubeCookies(outDir: string): Promise<string | undefined> {
+  if (!config.YOUTUBE_COOKIES_B64 || config.SKIP_COOKIES) return undefined;
+  try {
+    const buf = Buffer.from(config.YOUTUBE_COOKIES_B64, 'base64');
+    const cookiesPath = path.join(outDir, 'yt_cookies.txt');
+    await fs.writeFile(cookiesPath, buf);
+    logger.info('YouTube cookies detected');
+    return cookiesPath;
+  } catch (error) {
+    logger.warn('Failed to write YouTube cookies, proceeding without', { error });
+    return undefined;
+  }
+}
+
+function buildYouTubeArgs(outDir: string, options?: YouTubeArgsOptions): string[] {
+  const opts = options ?? {};
+  const args = [
+    '--no-playlist',
+    '--geo-bypass',
+    '--no-mtime',
+    '--ffmpeg-location', process.env['FFMPEG_PATH'] || '/usr/bin/ffmpeg',
+    '--sponsorblock-remove', 'all',
+    '--max-filesize', '2G',
+    '-4',
+    '--retries', '3',
+    '--ignore-config',
+    '--embed-metadata',
+    '--embed-thumbnail',
+    '-f', 'bestvideo[vcodec^=avc]+bestaudio/bestvideo*+bestaudio/best',
+    '--recode-video', 'mp4',
+    '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
+  ];
+
+  if (config.GEO_BYPASS_COUNTRY) args.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
+  if (opts.cookiesPath) args.push('--cookies', opts.cookiesPath);
+  if (opts.extra?.length) args.push(...opts.extra);
+  if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') args.unshift('-v');
+  return args;
+}
 
 function mapYtDlpError(stderr: string): string {
   const s = (stderr || '').toLowerCase();
@@ -19,45 +65,8 @@ function mapYtDlpError(stderr: string): string {
 export async function downloadYouTubeVideo(url: string, outDir: string): Promise<DownloadResult> {
   logger.info('Starting YouTube video download', { url, outDir });
 
-  let cookiesPath: string | undefined;
-  if (!!config.YOUTUBE_COOKIES_B64 && !config.SKIP_COOKIES) {
-    try {
-      const buf = Buffer.from(config.YOUTUBE_COOKIES_B64, 'base64');
-      cookiesPath = path.join(outDir, 'yt_cookies.txt');
-      await fs.writeFile(cookiesPath, buf);
-      logger.info('YouTube cookies detected');
-    } catch (e) {
-      logger.warn('Failed to write YouTube cookies, proceeding without', { error: e });
-      cookiesPath = undefined;
-    }
-  }
-
-  // Optimized, single-command strategy
-  const args = [
-    '--no-playlist',
-    '--geo-bypass',
-    '--no-mtime',
-    '--ffmpeg-location', process.env['FFMPEG_PATH'] || '/usr/bin/ffmpeg',
-    '--sponsorblock-remove', 'all',
-    '--max-filesize', '2G',
-    '-4',
-    '--retries', '3',
-    '--ignore-config',
-    '--embed-metadata',
-    '--embed-thumbnail',
-    // **OPTIMIZED FORMAT SELECTION**:
-    // 1. Prioritize downloading H.264 (AVC) video + best audio. This is fast as it often avoids recoding.
-    // 2. Fallback to best video in any codec (like AV1/VP9) + best audio.
-    '-f', 'bestvideo[vcodec^=avc]+bestaudio/bestvideo*+bestaudio/best',
-    // **SAFETY NET RECODING**:
-    // This will only activate if the fallback (non-AVC video) was used.
-    '--recode-video', 'mp4',
-    '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
-  ];
-  if (config.GEO_BYPASS_COUNTRY) args.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
-  if (cookiesPath) args.push('--cookies', cookiesPath);
-  if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') args.unshift('-v');
-  
+  const cookiesPath = await prepareYouTubeCookies(outDir);
+  const args = buildYouTubeArgs(outDir, cookiesPath ? { cookiesPath } : undefined);
   args.push(url);
 
   try {
@@ -88,4 +97,70 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
     logger.error('Unexpected error during YouTube download', { error, url, outDir });
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Unexpected error during download', { url, originalError: error });
   }
+}
+
+export async function fetchYouTubeMetadata(url: string): Promise<VideoMetadata> {
+  logger.info('Fetching YouTube metadata', { url });
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'yt-meta-'));
+  try {
+    const cookiesPath = await prepareYouTubeCookies(tempDir);
+    const options: YouTubeArgsOptions = {
+      extra: ['--dump-single-json', '--skip-download'],
+    };
+    if (cookiesPath) options.cookiesPath = cookiesPath;
+    const args = buildYouTubeArgs(tempDir, options);
+    args.push(url);
+
+    const result = await run('yt-dlp', args, { timeout: 300000 });
+    if (result.code !== 0) {
+      logger.error('yt-dlp metadata attempt failed (youtube)', { url, code: result.code, stderrPreview: (result.stderr || '').slice(0, 800) });
+      throw new AppError(mapYtDlpError(result.stderr), 'Failed to resolve metadata', { url, stderr: result.stderr, code: result.code });
+    }
+
+    try {
+      const parsed = JSON.parse(result.stdout || '{}');
+      const metadata = extractMetadata(parsed, url);
+      if (!metadata.downloadUrl) {
+        throw new Error('Missing downloadUrl in yt-dlp JSON');
+      }
+      return metadata;
+    } catch (error) {
+      logger.error('Failed to parse yt-dlp metadata JSON (youtube)', { url, error });
+      throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to parse metadata response', { url, originalError: String(error) });
+    }
+  } finally {
+    try {
+      await fs.remove(tempDir);
+    } catch (error) {
+      logger.warn('Failed to cleanup temp directory after metadata fetch', { url, error });
+    }
+  }
+}
+
+function extractMetadata(json: any, fallbackUrl: string): VideoMetadata {
+  const requested = Array.isArray(json?.requested_downloads) && json.requested_downloads.length > 0
+    ? json.requested_downloads[0]
+    : null;
+
+  const downloadUrl: string | undefined = requested?.url || json?.url;
+  const fileSize: number | undefined = requested?.filesize || requested?.filesizeApprox || json?.filesize || json?.filesizeApprox;
+  const duration: number | undefined = json?.duration || requested?.duration;
+  const title: string = json?.title || requested?.title || 'Untitled video';
+
+  let thumbnail: string | undefined;
+  if (json?.thumbnail && typeof json.thumbnail === 'string') {
+    thumbnail = json.thumbnail;
+  } else if (Array.isArray(json?.thumbnails) && json.thumbnails.length > 0) {
+    const best = json.thumbnails[json.thumbnails.length - 1];
+    if (best && typeof best.url === 'string') thumbnail = best.url;
+  }
+
+  const metadata: VideoMetadata = {
+    downloadUrl: downloadUrl || fallbackUrl,
+    title,
+  };
+  if (typeof duration === 'number' && !Number.isNaN(duration)) metadata.duration = duration;
+  if (typeof fileSize === 'number' && fileSize > 0) metadata.fileSize = fileSize;
+  if (thumbnail) metadata.thumbnail = thumbnail;
+  return metadata;
 }

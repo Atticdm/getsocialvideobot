@@ -11,3 +11,10 @@ export interface DownloadResult {
   videoInfo: VideoInfo;
 }
 
+export interface VideoMetadata {
+  downloadUrl: string;
+  title: string;
+  duration?: number;
+  fileSize?: number;
+  thumbnail?: string;
+}

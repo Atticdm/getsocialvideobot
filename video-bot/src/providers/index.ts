@@ -1,17 +1,18 @@
 import { isFacebookUrl } from './facebook/detect';
-import { downloadFacebookVideo } from './facebook/download';
+import { downloadFacebookVideo, fetchFacebookMetadata } from './facebook/download';
 import { isInstagramUrl } from './instagram/detect';
-import { downloadInstagramVideo } from './instagram/download';
+import { downloadInstagramVideo, fetchInstagramMetadata } from './instagram/download';
 import { isLinkedInUrl } from './linkedin/detect';
-import { downloadLinkedInVideo } from './linkedin/download';
+import { downloadLinkedInVideo, fetchLinkedInMetadata } from './linkedin/download';
 import { isYouTubeUrl } from './youtube/detect';
-import { downloadYouTubeVideo } from './youtube/download';
-import { DownloadResult } from './types';
+import { downloadYouTubeVideo, fetchYouTubeMetadata } from './youtube/download';
+import { DownloadResult, VideoMetadata } from './types';
 
 export type ProviderName = 'facebook' | 'instagram' | 'linkedin' | 'youtube';
 
 export interface Provider {
   download(url: string, outDir: string): Promise<DownloadResult>;
+  metadata(url: string): Promise<VideoMetadata>;
 }
 
 export function detectProvider(url: string): ProviderName | null {
@@ -35,18 +36,22 @@ export function getProvider(name: ProviderName): Provider {
     case 'facebook':
       return {
         download: downloadFacebookVideo,
+        metadata: fetchFacebookMetadata,
       };
     case 'instagram':
       return {
         download: downloadInstagramVideo,
+        metadata: fetchInstagramMetadata,
       };
     case 'linkedin':
       return {
         download: downloadLinkedInVideo,
+        metadata: fetchLinkedInMetadata,
       };
     case 'youtube':
       return {
         download: downloadYouTubeVideo,
+        metadata: fetchYouTubeMetadata,
       };
     default:
       throw new Error(`Unknown provider: ${name}`);

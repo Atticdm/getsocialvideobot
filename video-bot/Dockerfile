@@ -34,6 +34,9 @@ RUN npm run build
 RUN mkdir -p logs && chown -R node:node /app
 USER node
 
+# Enable source maps for better stack traces and debugging in production
+ENV NODE_OPTIONS=--enable-source-maps
+
 # Expose port (if needed for health checks)
 EXPOSE 3000
 

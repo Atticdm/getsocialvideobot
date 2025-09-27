@@ -1,9 +1,10 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import * as os from 'os';
 import { run } from '../../core/exec';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
-import { VideoInfo, DownloadResult } from '../types';
+import { VideoInfo, DownloadResult, VideoMetadata } from '../types';
 import { config } from '../../core/config';
 
 function mapYtDlpError(stderr: string): string {
@@ -39,9 +40,9 @@ async function findDownloadedFile(outDir: string): Promise<string | null> {
   return stats[0]?.p || null;
 }
 
-export async function downloadLinkedInVideo(url: string, outDir: string): Promise<DownloadResult> {
-  logger.info('Starting LinkedIn video download', { url, outDir });
+type Attempt = { referer: string; ua: string; useCookies: boolean; target: string };
 
+function createBaseArgs(outDir: string): string[] {
   const base = [
     '--no-playlist',
     '--geo-bypass',
@@ -54,26 +55,27 @@ export async function downloadLinkedInVideo(url: string, outDir: string): Promis
   ];
   if (config.GEO_BYPASS_COUNTRY) base.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
   if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') base.unshift('-v');
+  return base;
+}
 
-  // optional cookies (most LinkedIn videos need login)
-  let cookiesPath: string | undefined;
+async function prepareLinkedInCookies(outDir: string): Promise<string | undefined> {
   const canUseCookies = !!config['LINKEDIN_COOKIES_B64'] && !config['SKIP_COOKIES'];
-  if (canUseCookies) {
-    try {
-      const buf = Buffer.from(config['LINKEDIN_COOKIES_B64'], 'base64');
-      cookiesPath = path.join(outDir, 'li_cookies.txt');
-      await fs.writeFile(cookiesPath, buf);
-      logger.info('LinkedIn cookies detected');
-    } catch (e) {
-      logger.warn('Failed to write LinkedIn cookies, proceeding without', { error: e });
-      cookiesPath = undefined;
-    }
+  if (!canUseCookies) return undefined;
+  try {
+    const buf = Buffer.from(config['LINKEDIN_COOKIES_B64'], 'base64');
+    const cookiesPath = path.join(outDir, 'li_cookies.txt');
+    await fs.writeFile(cookiesPath, buf);
+    logger.info('LinkedIn cookies detected');
+    return cookiesPath;
+  } catch (error) {
+    logger.warn('Failed to write LinkedIn cookies, proceeding without', { error });
+    return undefined;
   }
+}
 
-  type Attempt = { referer: string; ua: string; useCookies: boolean; target: string };
+function buildLinkedInAttempts(url: string, cookiesPath?: string): Attempt[] {
   const desktopUA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const mobileUA = 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
-
   const attempts: Attempt[] = [];
   attempts.push({ target: url, referer: 'https://www.linkedin.com/', ua: desktopUA, useCookies: false });
   attempts.push({ target: url, referer: 'https://m.linkedin.com/', ua: mobileUA, useCookies: false });
@@ -81,6 +83,15 @@ export async function downloadLinkedInVideo(url: string, outDir: string): Promis
     attempts.push({ target: url, referer: 'https://www.linkedin.com/', ua: desktopUA, useCookies: true });
     attempts.push({ target: url, referer: 'https://m.linkedin.com/', ua: mobileUA, useCookies: true });
   }
+  return attempts;
+}
+
+export async function downloadLinkedInVideo(url: string, outDir: string): Promise<DownloadResult> {
+  logger.info('Starting LinkedIn video download', { url, outDir });
+
+  const base = createBaseArgs(outDir);
+  const cookiesPath = await prepareLinkedInCookies(outDir);
+  const attempts = buildLinkedInAttempts(url, cookiesPath);
 
   try {
     let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
@@ -114,3 +125,64 @@ export async function downloadLinkedInVideo(url: string, outDir: string): Promis
   }
 }
 
+export async function fetchLinkedInMetadata(url: string): Promise<VideoMetadata> {
+  logger.info('Fetching LinkedIn metadata', { url });
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'li-meta-'));
+  try {
+    const cookiesPath = await prepareLinkedInCookies(tempDir);
+    const attempts = buildLinkedInAttempts(url, cookiesPath);
+    const base = createBaseArgs(tempDir);
+
+    let lastError: AppError | Error | null = null;
+    for (const attempt of attempts) {
+      const args = [...base, '--dump-single-json', '--skip-download', '--add-header', `Referer:${attempt.referer}`, '--user-agent', attempt.ua];
+      if (attempt.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
+      args.push(attempt.target);
+
+      const result = await run('yt-dlp', args, { timeout: 240000 });
+      if (result.code === 0) {
+        try {
+          const parsed = JSON.parse(result.stdout || '{}');
+          const metadata = extractMetadata(parsed, attempt.target);
+          if (!metadata.downloadUrl) throw new Error('downloadUrl missing');
+          return metadata;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          logger.warn('Failed to parse LinkedIn metadata JSON', { url: attempt.target, error: lastError.message });
+        }
+      } else {
+        lastError = new AppError(mapYtDlpError(result.stderr), 'Metadata attempt failed', { url: attempt.target, stderr: result.stderr, code: result.code });
+      }
+    }
+
+    if (lastError instanceof AppError) throw lastError;
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to resolve LinkedIn metadata', { url, lastError: lastError?.message });
+  } finally {
+    try { await fs.remove(tempDir); } catch (error) {
+      logger.warn('Failed to cleanup temp dir after LinkedIn metadata', { url, error });
+    }
+  }
+}
+
+function extractMetadata(json: any, fallbackUrl: string): VideoMetadata {
+  const requested = Array.isArray(json?.requested_downloads) && json.requested_downloads.length > 0 ? json.requested_downloads[0] : null;
+  const downloadUrl: string | undefined = requested?.url || json?.url;
+  const fileSize: number | undefined = requested?.filesize || requested?.filesizeApprox || json?.filesize || json?.filesizeApprox;
+  const duration: number | undefined = json?.duration || requested?.duration;
+  const title: string = json?.title || requested?.title || 'LinkedIn video';
+  let thumbnail: string | undefined;
+  if (typeof json?.thumbnail === 'string') thumbnail = json.thumbnail;
+  else if (Array.isArray(json?.thumbnails) && json.thumbnails.length) {
+    const best = json.thumbnails[json.thumbnails.length - 1];
+    if (best?.url) thumbnail = best.url;
+  }
+
+  const metadata: VideoMetadata = {
+    downloadUrl: downloadUrl || fallbackUrl,
+    title,
+  };
+  if (typeof duration === 'number' && !Number.isNaN(duration)) metadata.duration = duration;
+  if (typeof fileSize === 'number' && fileSize > 0) metadata.fileSize = fileSize;
+  if (thumbnail) metadata.thumbnail = thumbnail;
+  return metadata;
+}

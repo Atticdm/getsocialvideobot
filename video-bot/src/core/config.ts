@@ -11,6 +11,9 @@ const configSchema = z.object({
   DOWNLOAD_DIR: z.string().default('./.tmp'),
   MAX_FILE_MB: z.coerce.number().positive().default(1950),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  REDIS_URL: z.string().optional().default(''),
+  CACHE_PREFIX: z.string().optional().default('yeet:'),
+  CACHE_TTL_SECONDS: z.coerce.number().positive().optional().default(3600),
   // Optional: base64-encoded Netscape cookies.txt for Facebook
   FACEBOOK_COOKIES_B64: z.string().optional().default(''),
   // Optional: base64-encoded Netscape cookies.txt for Instagram
