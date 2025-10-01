@@ -22,7 +22,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
   const url = args[0];
 
   if (!url) {
-    await ctx.reply('Please provide a Facebook video URL.\n\nUsage: /download <facebook_url>');
+    await ctx.reply('Please provide a video URL.\n\nUsage: /download <video_url>\n\nSupported platforms: Facebook, Instagram, LinkedIn, YouTube, TikTok');
     return;
   }
 
@@ -42,7 +42,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
     // Detect provider
     const providerName = detectProvider(url);
     if (!providerName) {
-      await ctx.reply('❌ Unsupported video provider. Only Facebook videos are supported.');
+      await ctx.reply('❌ Unsupported video provider. Supported platforms: Facebook, Instagram, LinkedIn, YouTube, TikTok.');
       return;
     }
 
@@ -65,7 +65,6 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       await ctx.replyWithDocument(
         { source: result.filePath, filename: fileName },
         {
-          caption: `📹 ${result.videoInfo.title}\n\n✅ Downloaded successfully!`,
           reply_parameters: {
             message_id: processingMessage.message_id,
           },
