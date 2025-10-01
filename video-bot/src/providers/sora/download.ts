@@ -5,6 +5,7 @@ import * as cheerio from 'cheerio';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
 import { VideoInfo, DownloadResult, VideoMetadata } from '../types';
+import { config } from '../../core/config';
 
 function extractVideoId(url: string): string {
   try {
@@ -16,22 +17,74 @@ function extractVideoId(url: string): string {
   }
 }
 
-async function fetchPageData(url: string): Promise<string> {
+async function prepareSoraCookies(outDir: string): Promise<string | undefined> {
+  const canUseCookies = !!config['SORA_COOKIES_B64'] && !config['SKIP_COOKIES'];
+  if (!canUseCookies) return undefined;
   try {
+    const buf = Buffer.from(config['SORA_COOKIES_B64'], 'base64');
+    const cookiesPath = path.join(outDir, 'sora_cookies.txt');
+    await fs.writeFile(cookiesPath, buf);
+    logger.info('Sora cookies detected');
+    return cookiesPath;
+  } catch (error) {
+    logger.warn('Failed to write Sora cookies, proceeding without', { error });
+    return undefined;
+  }
+}
+
+function parseCookiesFile(cookiesContent: string): string {
+  // Parse Netscape cookies.txt format and convert to Cookie header
+  const cookies: string[] = [];
+  const lines = cookiesContent.split('\n');
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    
+    const parts = trimmed.split('\t');
+    if (parts.length >= 7) {
+      const name = parts[5];
+      const value = parts[6];
+      cookies.push(`${name}=${value}`);
+    }
+  }
+  
+  return cookies.join('; ');
+}
+
+async function fetchPageData(url: string, cookiesPath?: string): Promise<string> {
+  try {
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Cache-Control': 'max-age=0',
+    };
+    
+    // Add cookies if provided
+    if (cookiesPath) {
+      try {
+        const cookiesContent = await fs.readFile(cookiesPath, 'utf-8');
+        const cookieHeader = parseCookiesFile(cookiesContent);
+        if (cookieHeader) {
+          headers['Cookie'] = cookieHeader;
+          logger.info('Using Sora cookies for request');
+        }
+      } catch (error) {
+        logger.warn('Failed to read Sora cookies file', { error });
+      }
+    }
+    
     const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Cache-Control': 'max-age=0',
-      },
+      headers,
       timeout: 30000,
       maxRedirects: 5,
     });
@@ -133,15 +186,18 @@ export async function downloadSoraVideo(url: string, outDir: string): Promise<Do
   }
   
   try {
+    // Prepare cookies if available
+    const cookiesPath = await prepareSoraCookies(outDir);
+    
     // Fetch the page HTML
-    const html = await fetchPageData(url);
+    const html = await fetchPageData(url, cookiesPath);
     
     // Check if we got Cloudflare challenge page
     if (html.includes('Just a moment...') || html.includes('challenge-platform')) {
-      logger.warn('Cloudflare protection detected, trying alternative method');
+      logger.warn('Cloudflare protection detected');
       throw new AppError(
         ERROR_CODES.ERR_FETCH_FAILED, 
-        'Sora page is protected by Cloudflare. Please try again or use a browser to access the video.',
+        'Sora page is protected by Cloudflare. Please set SORA_COOKIES_B64 environment variable with your authentication cookies.',
         { url }
       );
     }
@@ -179,9 +235,11 @@ export async function downloadSoraVideo(url: string, outDir: string): Promise<Do
 
 export async function fetchSoraMetadata(url: string): Promise<VideoMetadata> {
   logger.info('Fetching Sora metadata', { url });
+  const tempDir = await fs.mkdtemp(path.join(require('os').tmpdir(), 'sora-meta-'));
   
   try {
-    const html = await fetchPageData(url);
+    const cookiesPath = await prepareSoraCookies(tempDir);
+    const html = await fetchPageData(url, cookiesPath);
     
     if (html.includes('Just a moment...') || html.includes('challenge-platform')) {
       throw new AppError(
@@ -219,6 +277,12 @@ export async function fetchSoraMetadata(url: string): Promise<VideoMetadata> {
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to fetch Sora metadata', { url, originalError: error });
+  } finally {
+    try { 
+      await fs.remove(tempDir); 
+    } catch (error) {
+      logger.warn('Failed to cleanup temp dir after Sora metadata', { url, error });
+    }
   }
 }
 
