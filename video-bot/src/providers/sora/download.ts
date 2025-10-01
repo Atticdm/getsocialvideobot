@@ -1,7 +1,6 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import axios from 'axios';
-import * as cheerio from 'cheerio';
+import { chromium } from 'playwright-core';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
 import { VideoInfo, DownloadResult, VideoMetadata } from '../types';
@@ -17,168 +16,136 @@ function extractVideoId(url: string): string {
   }
 }
 
-async function prepareSoraCookies(outDir: string): Promise<string | undefined> {
+async function parseCookiesFromB64(): Promise<any[] | null> {
   const canUseCookies = !!config['SORA_COOKIES_B64'] && !config['SKIP_COOKIES'];
-  if (!canUseCookies) return undefined;
+  if (!canUseCookies) return null;
+  
   try {
     const buf = Buffer.from(config['SORA_COOKIES_B64'], 'base64');
-    const cookiesPath = path.join(outDir, 'sora_cookies.txt');
-    await fs.writeFile(cookiesPath, buf);
-    logger.info('Sora cookies detected');
-    return cookiesPath;
-  } catch (error) {
-    logger.warn('Failed to write Sora cookies, proceeding without', { error });
-    return undefined;
-  }
-}
-
-function parseCookiesFile(cookiesContent: string): string {
-  // Parse Netscape cookies.txt format and convert to Cookie header
-  const cookies: string[] = [];
-  const lines = cookiesContent.split('\n');
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
+    const content = buf.toString('utf-8');
+    const cookies: any[] = [];
     
-    const parts = trimmed.split('\t');
-    if (parts.length >= 7) {
-      const name = parts[5];
-      const value = parts[6];
-      cookies.push(`${name}=${value}`);
-    }
-  }
-  
-  return cookies.join('; ');
-}
-
-async function fetchPageData(url: string, cookiesPath?: string): Promise<string> {
-  try {
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'DNT': '1',
-      'Connection': 'keep-alive',
-      'Upgrade-Insecure-Requests': '1',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'none',
-      'Sec-Fetch-User': '?1',
-      'Cache-Control': 'max-age=0',
-    };
-    
-    // Add cookies if provided
-    if (cookiesPath) {
-      try {
-        const cookiesContent = await fs.readFile(cookiesPath, 'utf-8');
-        const cookieHeader = parseCookiesFile(cookiesContent);
-        if (cookieHeader) {
-          headers['Cookie'] = cookieHeader;
-          logger.info('Using Sora cookies for request');
-        }
-      } catch (error) {
-        logger.warn('Failed to read Sora cookies file', { error });
-      }
-    }
-    
-    const response = await axios.get(url, {
-      headers,
-      timeout: 30000,
-      maxRedirects: 5,
-    });
-    return response.data;
-  } catch (error: any) {
-    logger.error('Failed to fetch Sora page', { url, error: error.message });
-    throw new AppError(ERROR_CODES.ERR_FETCH_FAILED, 'Failed to fetch Sora page', { url, error: error.message });
-  }
-}
-
-function extractVideoUrlFromHtml(html: string, url: string): string | null {
-  try {
-    const $ = cheerio.load(html);
-    
-    // Try to find video in various script tags with Next.js data
-    let foundUrl: string | null = null;
-    $('script').each((_, element) => {
-      if (foundUrl) return false; // Stop if already found
-      const scriptContent = $(element).html();
-      if (!scriptContent) return true; // Continue iteration
+    const lines = content.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
       
-      // Look for video URLs in JSON data
-      const videoUrlMatch = scriptContent.match(/"(https:\/\/[^"]*\.mp4[^"]*)"/g);
-      if (videoUrlMatch && videoUrlMatch.length > 0) {
-        // Clean up the URL
-        const cleanUrl = videoUrlMatch[0].replace(/"/g, '').replace(/\\u002F/g, '/');
-        logger.info('Found video URL in script tag', { url: cleanUrl });
-        foundUrl = cleanUrl;
-        return false; // Stop iteration
+      const parts = trimmed.split('\t');
+      if (parts.length >= 7 && parts[5] && parts[6]) {
+        cookies.push({
+          name: parts[5],
+          value: parts[6],
+          domain: parts[0] || '',
+          path: parts[2] || '/',
+          expires: parseInt(parts[4] || '0', 10) || -1,
+          httpOnly: false,
+          secure: parts[3] === 'TRUE',
+        });
       }
-      return true; // Continue iteration
+    }
+    
+    logger.info('Parsed Sora cookies for Playwright', { count: cookies.length });
+    return cookies.length > 0 ? cookies : null;
+  } catch (error) {
+    logger.warn('Failed to parse Sora cookies', { error });
+    return null;
+  }
+}
+
+async function fetchVideoUrlWithPlaywright(url: string): Promise<string | null> {
+  logger.info('Using Playwright to fetch Sora video', { url });
+  let browser = null;
+  
+  try {
+    const cookies = await parseCookiesFromB64();
+    if (!cookies) {
+      logger.warn('No cookies available - Cloudflare will likely block the request');
+    }
+    
+    browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     });
     
-    if (foundUrl) return foundUrl;
-    
-    // Try to find video tag directly
-    const videoSrc = $('video source').attr('src') || $('video').attr('src');
-    if (videoSrc) {
-      logger.info('Found video URL in video tag', { url: videoSrc });
-      return videoSrc;
+    if (cookies) {
+      await context.addCookies(cookies);
+      logger.info('Cookies added to Playwright context');
     }
     
-    // Try to find in meta tags
-    const metaVideo = $('meta[property="og:video"]').attr('content') || 
-                     $('meta[property="og:video:url"]').attr('content');
-    if (metaVideo) {
-      logger.info('Found video URL in meta tags', { url: metaVideo });
-      return metaVideo;
+    const page = await context.newPage();
+    let videoUrl: string | null = null;
+    
+    // Intercept network requests to find video URL
+    page.on('request', (request) => {
+      const reqUrl = request.url();
+      if (reqUrl.includes('.mp4') || reqUrl.includes('.m3u8')) {
+        logger.info('Found potential video URL in network request', { url: reqUrl });
+        if (!videoUrl) videoUrl = reqUrl;
+      }
+    });
+    
+    logger.info('Navigating to Sora page with Playwright');
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+    
+    // Wait a bit for video to load
+    await page.waitForTimeout(3000);
+    
+    // Try to find video element
+    const videoElement = await page.$('video');
+    if (videoElement) {
+      const src = await videoElement.getAttribute('src');
+      if (src && src.startsWith('http')) {
+        logger.info('Found video source in video element', { src });
+        videoUrl = src;
+      }
+      
+      // Try source elements
+      const sources = await page.$$('video source');
+      for (const source of sources) {
+        const srcAttr = await source.getAttribute('src');
+        if (srcAttr && srcAttr.startsWith('http')) {
+          logger.info('Found video source in source element', { src: srcAttr });
+          videoUrl = srcAttr;
+          break;
+        }
+      }
     }
     
-    logger.warn('No video URL found in HTML', { pageUrl: url });
-    return null;
+    await browser.close();
+    return videoUrl;
   } catch (error: any) {
-    logger.error('Failed to parse Sora HTML', { url, error: error.message });
+    if (browser) await browser.close().catch(() => {});
+    logger.error('Playwright failed to fetch Sora video', { url, error: error.message });
     return null;
   }
 }
 
 async function downloadVideoFile(videoUrl: string, outputPath: string): Promise<void> {
   try {
-    logger.info('Downloading video from URL', { videoUrl, outputPath });
+    logger.info('Downloading video file', { videoUrl, outputPath });
     
-    const response = await axios.get(videoUrl, {
-      responseType: 'stream',
+    const response = await fetch(videoUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
         'Referer': 'https://sora.chatgpt.com/',
       },
-      timeout: 300000, // 5 minutes
     });
     
-    const writer = fs.createWriteStream(outputPath);
-    response.data.pipe(writer);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
     
-    return new Promise((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
+    const buffer = await response.arrayBuffer();
+    await fs.writeFile(outputPath, Buffer.from(buffer));
+    logger.info('Video file downloaded successfully', { outputPath, size: buffer.byteLength });
   } catch (error: any) {
     logger.error('Failed to download video file', { videoUrl, error: error.message });
     throw new AppError(ERROR_CODES.ERR_FETCH_FAILED, 'Failed to download video file', { videoUrl, error: error.message });
   }
 }
 
-function parseVideoInfoFromPath(url: string, videoId: string): VideoInfo {
-  return {
-    id: videoId,
-    title: `Sora Video ${videoId}`,
-    url,
-  };
-}
-
 export async function downloadSoraVideo(url: string, outDir: string): Promise<DownloadResult> {
-  logger.info('Starting Sora video download', { url, outDir });
+  logger.info('Starting Sora video download with Playwright', { url, outDir });
   
   const videoId = extractVideoId(url);
   if (!videoId) {
@@ -186,34 +153,21 @@ export async function downloadSoraVideo(url: string, outDir: string): Promise<Do
   }
   
   try {
-    // Prepare cookies if available
-    const cookiesPath = await prepareSoraCookies(outDir);
+    // Use Playwright to bypass Cloudflare and get video URL
+    const videoUrl = await fetchVideoUrlWithPlaywright(url);
     
-    // Fetch the page HTML
-    const html = await fetchPageData(url, cookiesPath);
-    
-    // Check if we got Cloudflare challenge page
-    if (html.includes('Just a moment...') || html.includes('challenge-platform')) {
-      logger.warn('Cloudflare protection detected');
-      throw new AppError(
-        ERROR_CODES.ERR_FETCH_FAILED, 
-        'Sora page is protected by Cloudflare. Please set SORA_COOKIES_B64 environment variable with your authentication cookies.',
-        { url }
-      );
-    }
-    
-    // Extract video URL from HTML
-    const videoUrl = extractVideoUrlFromHtml(html, url);
     if (!videoUrl) {
       throw new AppError(
-        ERROR_CODES.ERR_INTERNAL, 
-        'Could not find video URL in Sora page. The page structure may have changed.',
+        ERROR_CODES.ERR_FETCH_FAILED,
+        config['SORA_COOKIES_B64'] 
+          ? 'Could not extract video URL. Cookies may be expired or the video may be unavailable.'
+          : 'Could not extract video URL. Please set SORA_COOKIES_B64 with your authentication cookies.',
         { url }
       );
     }
     
-    // Download the video
-    const outputPath = path.join(outDir, `${videoId}.mp4`);
+    // Download the video file
+    const outputPath = path.join(outDir, `sora_${videoId}.mp4`);
     await downloadVideoFile(videoUrl, outputPath);
     
     // Verify file was created
@@ -222,10 +176,15 @@ export async function downloadSoraVideo(url: string, outDir: string): Promise<Do
       throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Video file was not created', { url, outputPath });
     }
     
-    const videoInfo = parseVideoInfoFromPath(url, videoId);
-    logger.info('Sora video downloaded successfully', { url, filePath: outputPath, videoInfo });
+    const videoInfo: VideoInfo = {
+      id: videoId,
+      title: `Sora Video ${videoId}`,
+      url,
+    };
     
+    logger.info('Sora video downloaded successfully', { url, filePath: outputPath, videoInfo });
     return { filePath: outputPath, videoInfo };
+    
   } catch (error) {
     if (error instanceof AppError) throw error;
     logger.error('Unexpected error during Sora download', { error, url, outDir });
@@ -234,55 +193,28 @@ export async function downloadSoraVideo(url: string, outDir: string): Promise<Do
 }
 
 export async function fetchSoraMetadata(url: string): Promise<VideoMetadata> {
-  logger.info('Fetching Sora metadata', { url });
-  const tempDir = await fs.mkdtemp(path.join(require('os').tmpdir(), 'sora-meta-'));
+  logger.info('Fetching Sora metadata with Playwright', { url });
   
   try {
-    const cookiesPath = await prepareSoraCookies(tempDir);
-    const html = await fetchPageData(url, cookiesPath);
+    const videoUrl = await fetchVideoUrlWithPlaywright(url);
     
-    if (html.includes('Just a moment...') || html.includes('challenge-platform')) {
-      throw new AppError(
-        ERROR_CODES.ERR_FETCH_FAILED,
-        'Sora page is protected by Cloudflare',
-        { url }
-      );
-    }
-    
-    const videoUrl = extractVideoUrlFromHtml(html, url);
     if (!videoUrl) {
       throw new AppError(
-        ERROR_CODES.ERR_INTERNAL,
-        'Could not find video URL in Sora page',
+        ERROR_CODES.ERR_FETCH_FAILED,
+        'Could not extract video metadata. Please ensure SORA_COOKIES_B64 is set.',
         { url }
       );
     }
     
-    const $ = cheerio.load(html);
-    const title = $('meta[property="og:title"]').attr('content') || 
-                 $('title').text() || 
-                 'Sora Video';
-    const thumbnail = $('meta[property="og:image"]').attr('content');
+    const videoId = extractVideoId(url);
     
-    const metadata: VideoMetadata = {
+    return {
       downloadUrl: videoUrl,
-      title: title.trim(),
+      title: `Sora Video ${videoId}`,
     };
-    
-    if (thumbnail) {
-      metadata.thumbnail = thumbnail;
-    }
-    
-    return metadata;
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to fetch Sora metadata', { url, originalError: error });
-  } finally {
-    try { 
-      await fs.remove(tempDir); 
-    } catch (error) {
-      logger.warn('Failed to cleanup temp dir after Sora metadata', { url, error });
-    }
   }
 }
 
