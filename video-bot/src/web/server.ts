@@ -116,7 +116,7 @@ fastify.get('/', async (req, reply) => {
   <body>
     <div class="card">
       <h1>Video Downloader</h1>
-      <p>Paste a public video URL (Facebook / Instagram / LinkedIn / YouTube / TikTok).</p>
+      <p>Paste a public video URL (Facebook / Instagram / LinkedIn / YouTube / TikTok / Sora).</p>
       <form id="frm" onsubmit="event.preventDefault(); start(document.getElementById('url').value);">
         <input id="url" type="url" name="url" placeholder="https://..." required />
         <button type="submit">Download</button>

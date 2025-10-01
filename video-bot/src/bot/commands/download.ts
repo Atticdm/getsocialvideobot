@@ -22,7 +22,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
   const url = args[0];
 
   if (!url) {
-    await ctx.reply('Please provide a video URL.\n\nUsage: /download <video_url>\n\nSupported platforms: Facebook, Instagram, LinkedIn, YouTube, TikTok');
+    await ctx.reply('Please provide a video URL.\n\nUsage: /download <video_url>\n\nSupported platforms: Facebook, Instagram, LinkedIn, YouTube, TikTok, Sora');
     return;
   }
 
@@ -42,7 +42,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
     // Detect provider
     const providerName = detectProvider(url);
     if (!providerName) {
-      await ctx.reply('❌ Unsupported video provider. Supported platforms: Facebook, Instagram, LinkedIn, YouTube, TikTok.');
+      await ctx.reply('❌ Unsupported video provider. Supported platforms: Facebook, Instagram, LinkedIn, YouTube, TikTok, Sora.');
       return;
     }
 

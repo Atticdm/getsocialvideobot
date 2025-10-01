@@ -8,9 +8,11 @@ import { isYouTubeUrl } from './youtube/detect';
 import { downloadYouTubeVideo, fetchYouTubeMetadata } from './youtube/download';
 import { isTikTokUrl } from './tiktok/detect';
 import { downloadTikTokVideo, fetchTikTokMetadata } from './tiktok/download';
+import { isSoraUrl } from './sora/detect';
+import { downloadSoraVideo, fetchSoraMetadata } from './sora/download';
 import { DownloadResult, VideoMetadata } from './types';
 
-export type ProviderName = 'facebook' | 'instagram' | 'linkedin' | 'youtube' | 'tiktok';
+export type ProviderName = 'facebook' | 'instagram' | 'linkedin' | 'youtube' | 'tiktok' | 'sora';
 
 export interface Provider {
   download(url: string, outDir: string): Promise<DownloadResult>;
@@ -32,6 +34,9 @@ export function detectProvider(url: string): ProviderName | null {
   }
   if (isTikTokUrl(url)) {
     return 'tiktok';
+  }
+  if (isSoraUrl(url)) {
+    return 'sora';
   }
   return null;
 }
@@ -62,6 +67,11 @@ export function getProvider(name: ProviderName): Provider {
       return {
         download: downloadTikTokVideo,
         metadata: fetchTikTokMetadata,
+      };
+    case 'sora':
+      return {
+        download: downloadSoraVideo,
+        metadata: fetchSoraMetadata,
       };
     default:
       throw new Error(`Unknown provider: ${name}`);

@@ -180,6 +180,7 @@ Currently supports:
 - LinkedIn (linkedin.com)
 - YouTube (youtube.com, youtu.be)
 - TikTok (tiktok.com, vm.tiktok.com, vt.tiktok.com)
+- Sora (sora.chatgpt.com)
 
 ## Error Codes
 
