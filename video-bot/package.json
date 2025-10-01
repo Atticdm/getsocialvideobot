@@ -30,6 +30,8 @@
     "fs-extra": "^11.2.0",
     "ioredis": "^5.8.0",
     "pino": "^8.17.2",
+    "playwright": "^1.55.1",
+    "playwright-core": "^1.55.1",
     "telegraf": "^4.15.6",
     "zod": "^3.22.4"
   },
