@@ -1,6 +1,6 @@
 # Video Bot
 
-A Telegram bot that downloads public Facebook videos and sends them back to users as files.
+A Telegram bot that downloads public videos from multiple platforms and sends them back to users as files.
 
 ## Features
 
@@ -176,6 +176,10 @@ docker run -d --name video-web -p 3000:3000 \
 
 Currently supports:
 - Facebook (facebook.com, fb.watch, m.facebook.com)
+- Instagram (instagram.com, instagr.am)
+- LinkedIn (linkedin.com)
+- YouTube (youtube.com, youtu.be)
+- TikTok (tiktok.com, vm.tiktok.com, vt.tiktok.com)
 
 ## Error Codes
 

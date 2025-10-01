@@ -5,7 +5,7 @@ Last updated: 2025-09-25
 Overview
 - Repo root: getsocialvideobot
 - Main app: video-bot (TypeScript, Telegraf bot + Fastify web)
-- Providers implemented: Facebook, Instagram, LinkedIn, YouTube (yt-dlp + ffmpeg)
+- Providers implemented: Facebook, Instagram, LinkedIn, YouTube, TikTok (yt-dlp + ffmpeg)
 - **STATUS: Production Ready** - Both bot and web service working reliably
 
 Key Code Paths

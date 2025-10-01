@@ -6,9 +6,11 @@ import { isLinkedInUrl } from './linkedin/detect';
 import { downloadLinkedInVideo, fetchLinkedInMetadata } from './linkedin/download';
 import { isYouTubeUrl } from './youtube/detect';
 import { downloadYouTubeVideo, fetchYouTubeMetadata } from './youtube/download';
+import { isTikTokUrl } from './tiktok/detect';
+import { downloadTikTokVideo, fetchTikTokMetadata } from './tiktok/download';
 import { DownloadResult, VideoMetadata } from './types';
 
-export type ProviderName = 'facebook' | 'instagram' | 'linkedin' | 'youtube';
+export type ProviderName = 'facebook' | 'instagram' | 'linkedin' | 'youtube' | 'tiktok';
 
 export interface Provider {
   download(url: string, outDir: string): Promise<DownloadResult>;
@@ -27,6 +29,9 @@ export function detectProvider(url: string): ProviderName | null {
   }
   if (isYouTubeUrl(url)) {
     return 'youtube';
+  }
+  if (isTikTokUrl(url)) {
+    return 'tiktok';
   }
   return null;
 }
@@ -52,6 +57,11 @@ export function getProvider(name: ProviderName): Provider {
       return {
         download: downloadYouTubeVideo,
         metadata: fetchYouTubeMetadata,
+      };
+    case 'tiktok':
+      return {
+        download: downloadTikTokVideo,
+        metadata: fetchTikTokMetadata,
       };
     default:
       throw new Error(`Unknown provider: ${name}`);
