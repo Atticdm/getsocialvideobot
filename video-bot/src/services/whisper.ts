@@ -18,7 +18,7 @@ export async function transcribeWithWhisper(audioPath: string): Promise<WhisperO
     );
   }
 
-  const model = config.OPENAI_WHISPER_MODEL || 'gpt-4o-mini-transcribe';
+  const model = config.OPENAI_WHISPER_MODEL || 'whisper-1';
   const form = new FormData();
   form.append('file', fs.createReadStream(audioPath), path.basename(audioPath));
   form.append('model', model);
