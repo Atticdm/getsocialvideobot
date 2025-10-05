@@ -13,7 +13,9 @@ export async function startCommand(ctx: Context): Promise<void> {
 
 I can download public videos from Facebook, Instagram, YouTube, TikTok, LinkedIn и Sora.
 
-Перевод Instagram Reels с новой озвучкой: /translate <url> (если включено).
+🌐 Нужен перевод рилса?
+- Нажми кнопку «🌐 EN→RU» или «🌐 RU→EN», затем пришли ссылку на reel
+- Или просто пришли ссылку, чтобы получить оригинал
 
 Use /help to see available commands.
 
