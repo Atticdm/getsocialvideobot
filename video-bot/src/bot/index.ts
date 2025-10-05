@@ -8,6 +8,7 @@ import { helpCommand } from './commands/help';
 import { statusCommand } from './commands/status';
 import { downloadCommand } from './commands/download';
 import { diagCommand } from './commands/diag';
+import { translateCommand } from './commands/translate';
 
 async function main(): Promise<void> {
   try {
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
     bot.command('status', statusCommand);
     bot.command('download', downloadCommand);
     bot.command('diag', diagCommand);
+    bot.command('translate', translateCommand);
 
     // Handle keyboard buttons
     bot.hears('📥 Download', (ctx) => {
@@ -47,6 +49,9 @@ async function main(): Promise<void> {
 
     bot.hears('❓ Help', helpCommand);
     bot.hears('🔧 Status', statusCommand);
+    bot.hears('🌐 Translate', async (ctx) => {
+      await ctx.reply('Используйте /translate <ссылка на рилс> [en-ru|ru-en|auto], чтобы получить перевод с новой озвучкой. Поддерживаются только Instagram Reels и языки английский/русский.');
+    });
 
     // Handle unknown messages
     bot.on('text', async (ctx) => {

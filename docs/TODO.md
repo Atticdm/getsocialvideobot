@@ -6,4 +6,4 @@ TODO / Next Steps
 - Providers: centralize findDownloadedFile / parseVideoInfoFromPath (utils.ts created; wire remaining providers).
 - Rate limiting (web): replace simple activeByIp with reusable core/rateLimit.
 - Observability: expose health/metrics (e.g., GET /health, Prometheus metrics).
-
+- Translation: добавить больше направлений, кеширование результатов и fallback-голоса Hume.

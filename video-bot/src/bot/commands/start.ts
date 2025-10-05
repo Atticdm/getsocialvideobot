@@ -11,7 +11,9 @@ export async function startCommand(ctx: Context): Promise<void> {
     
     const message = `🎥 **Welcome to Video Bot!**
 
-I can download public videos from Facebook and Instagram for you.
+I can download public videos from Facebook, Instagram, YouTube, TikTok, LinkedIn и Sora.
+
+Перевод Instagram Reels с новой озвучкой: /translate <url> (если включено).
 
 Use /help to see available commands.
 

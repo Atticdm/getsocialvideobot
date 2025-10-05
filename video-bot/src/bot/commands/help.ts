@@ -15,8 +15,14 @@ export async function helpCommand(ctx: Context): Promise<void> {
 /help - Show this help message
 /status - Check bot status and system info
 /download <url> - Download a video (Facebook, Instagram, LinkedIn, YouTube)
+/translate <url> [en-ru|ru-en|auto] - Переводит Instagram Reels с новой озвучкой (при ENABLE_REEL_TRANSLATION)
 
 **Usage:** /download <video_url>
+
+**Translation:**
+/translate https://www.instagram.com/reel/XXXXXXXXXXX/ en-ru
+
+Перевод доступен для английского <-> русского и требует настроенных 'OPENAI_API_KEY' и 'HUME_*' ключей.
 
 **Examples:**
 /download https://www.facebook.com/watch/?v=123456789

@@ -39,6 +39,7 @@ Current State (OPTIMIZED)
 - **Performance**: 3-5x faster downloads (remux vs transcode)
 - **CPU Usage**: Significantly reduced (avoids unnecessary recoding)
 - **Compatibility**: Maintains universal MP4 output
+- **New**: Instagram Reels translation (EN↔RU) via Whisper + GPT + Hume, available behind `ENABLE_REEL_TRANSLATION`
 
 Recent Major Updates (2025-09-25)
 1) **CRITICAL FIXES**:
@@ -55,8 +56,9 @@ Recent Major Updates (2025-09-25)
 3) **ENHANCED FEATURES**:
    - Improved error messages with setup guidance
    - Added comprehensive YouTube cookies setup guide
-   - Better file detection (includes audio files for diagnostics)
-   - Configurable ffmpeg path for different environments
+ - Better file detection (includes audio files for diagnostics)
+  - Configurable ffmpeg path for different environments
+  - Instagram Reels translation pipeline (Whisper -> GPT -> Hume TTS -> ffmpeg mux)
 
 4) **DEPLOYMENT READY**:
    - All changes pushed to git
@@ -89,4 +91,3 @@ Useful Files to Read First
 - video-bot/src/web/server.ts (streaming endpoint)
 - video-bot/src/core/exec.ts (command execution)
 - docs/YOUTUBE_COOKIES_SETUP.md (cookies configuration)
-

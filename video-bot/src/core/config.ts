@@ -26,6 +26,15 @@ const configSchema = z.object({
   SKIP_COOKIES: z.coerce.boolean().optional().default(false),
   // Optional: two-letter country code to try for geo-bypass (e.g. US, NL)
   GEO_BYPASS_COUNTRY: z.string().optional().default(''),
+  // Translation workflow configuration
+  ENABLE_REEL_TRANSLATION: z.coerce.boolean().optional().default(false),
+  OPENAI_API_KEY: z.string().optional().default(''),
+  OPENAI_WHISPER_MODEL: z.string().optional().default('gpt-4o-mini-transcribe'),
+  OPENAI_TRANSLATE_MODEL: z.string().optional().default('gpt-4o-mini'),
+  HUME_API_KEY: z.string().optional().default(''),
+  HUME_CLIENT_SECRET: z.string().optional().default(''),
+  HUME_VOICE_ID: z.string().optional().default('octave-2-evi'),
+  HUME_AUDIO_FORMAT: z.string().optional().default('wav'),
 });
 
 export type Config = z.infer<typeof configSchema>;

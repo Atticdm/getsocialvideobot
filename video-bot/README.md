@@ -9,6 +9,7 @@ A Telegram bot that downloads public videos from multiple platforms and sends th
 - Rate limiting (max 3 concurrent downloads per user)
 - Comprehensive error handling with user-friendly messages
 - Modular architecture supporting multiple video providers
+- Optional Instagram Reels translation pipeline (Whisper -> GPT -> Hume TTS)
 - Structured logging with Pino
 - TypeScript with strict mode
 - Docker support
@@ -19,7 +20,7 @@ A Telegram bot that downloads public videos from multiple platforms and sends th
 - Node.js LTS (20.10.0+)
 - nvm (Node Version Manager) - recommended
 - yt-dlp
-- ffmpeg (optional, for video processing)
+- ffmpeg (required for translation workflow, optional otherwise)
 - Telegram Bot Token
 
 ## Installation
@@ -88,6 +89,16 @@ NODE_ENV=development
 DOWNLOAD_DIR=./.tmp
 MAX_FILE_MB=1950
 LOG_LEVEL=info
+# Enable reel translation (optional)
+ENABLE_REEL_TRANSLATION=0
+OPENAI_API_KEY=
+OPENAI_WHISPER_MODEL=gpt-4o-mini-transcribe
+OPENAI_TRANSLATE_MODEL=gpt-4o-mini
+HUME_API_KEY=
+HUME_CLIENT_SECRET=
+HUME_VOICE_ID=octave-2-evi
+HUME_AUDIO_FORMAT=wav
+#FFMPEG_PATH=/usr/bin/ffmpeg
 ```
 
 ### Environment Variables
@@ -97,6 +108,13 @@ LOG_LEVEL=info
 - `DOWNLOAD_DIR`: Directory for temporary files (default: `./.tmp`)
 - `MAX_FILE_MB`: Maximum file size in MB (default: 1950)
 - `LOG_LEVEL`: Logging level (default: `info`)
+- `ENABLE_REEL_TRANSLATION`: Set to `1` to enable Instagram Reels translation workflow
+- `OPENAI_API_KEY`: Required when translation is enabled (Whisper + GPT models)
+- `OPENAI_WHISPER_MODEL` / `OPENAI_TRANSLATE_MODEL`: Model overrides for transcription/translation
+- `HUME_API_KEY` / `HUME_CLIENT_SECRET`: Credentials for Hume Octave 2 TTS
+- `HUME_VOICE_ID`: Default Hume voice for dubbing (default: `octave-2-evi`)
+- `HUME_AUDIO_FORMAT`: Output audio format for TTS (default: `wav`)
+- `FFMPEG_PATH`: Optional absolute path to ffmpeg binary if not in PATH
 - `FACEBOOK_COOKIES_B64` (optional): Base64-encoded contents of a Netscape `cookies.txt` file for Facebook. Use this if certain videos require login in your region. To supply:
   1. Export cookies from your browser to `cookies.txt` (Netscape format)
   2. Base64-encode the file: `base64 -w0 cookies.txt`
@@ -163,14 +181,22 @@ docker run -d --name video-web -p 3000:3000 \
 - `/start` - Show welcome message and instructions
 - `/help` - Display help information and usage examples
 - `/status` - Check bot status, yt-dlp version, ffmpeg availability, and disk space
-- `/download <url>` - Download a Facebook video
+- `/download <url>` - Download a supported video in the original language
+- `/translate <url> [en-ru|ru-en|auto]` - Translate Instagram Reel audio and return a dubbed version (requires translation env vars)
 
 ### Examples
 
 ```
 /download https://www.facebook.com/watch/?v=123456789
 /download https://fb.watch/abc123def/
+/translate https://www.instagram.com/reel/XXXXXXXXXXX/ en-ru
 ```
+
+### Translation Workflow
+
+- Instagram Reels only (English ↔ Russian)
+- Pipeline: download → Whisper transcription → GPT translation → Hume Octave 2 TTS → ffmpeg remux
+- Detailed setup guide: [docs/REELS_TRANSLATION_SETUP.md](../docs/REELS_TRANSLATION_SETUP.md)
 
 ## Supported Platforms
 
