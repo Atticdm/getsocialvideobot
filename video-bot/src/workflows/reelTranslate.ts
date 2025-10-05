@@ -2,8 +2,9 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { detectProvider, getProvider } from '../providers';
 import { AppError, ERROR_CODES } from '../core/errors';
+import { config } from '../core/config';
 import { logger } from '../core/logger';
-import { extractAudioTrack, muxVideoWithAudio, getVideoDuration } from '../core/media';
+import { getVideoDuration, extractAudioSnippet, detectVoiceGender, extractFullAudio, processAndMuxVideo } from '../core/media';
 import { transcribeWithWhisper } from '../services/whisper';
 import { translateText } from '../services/translator';
 import { synthesizeSpeech } from '../services/tts';
@@ -45,6 +46,18 @@ function completeStage(stage: TranslationStage): void {
 function failStage(stage: TranslationStage, error: unknown): void {
   stage.completedAt = Date.now();
   stage.error = error instanceof Error ? error.message : String(error);
+}
+
+function selectVoiceId(target: WhisperLanguage, gender: 'male' | 'female' | 'unknown'): string {
+  const isRussian = target === 'ru';
+  if (isRussian) {
+    return gender === 'male'
+      ? config.HUME_VOICE_ID_RU_MALE
+      : config.HUME_VOICE_ID_RU_FEMALE;
+  }
+  return gender === 'male'
+    ? config.HUME_VOICE_ID_EN_MALE
+    : config.HUME_VOICE_ID_EN_FEMALE;
 }
 
 function resolveLanguages(direction: TranslationDirection, detected: WhisperLanguage): {
@@ -111,9 +124,11 @@ export async function translateInstagramReel(
   }
 
   const audioStage = beginStage('extract-audio', stages);
-  const audioPath = path.join(sessionDir, `${videoId}.wav`);
+  const fullAudioPath = path.join(sessionDir, `${videoId}.full.wav`);
+  const snippetPath = path.join(sessionDir, `${videoId}.snippet.wav`);
   try {
-    await extractAudioTrack(downloadPath, audioPath);
+    await extractFullAudio(downloadPath, fullAudioPath);
+    await extractAudioSnippet(downloadPath, snippetPath);
     completeStage(audioStage);
     await notifyObserver(observer, audioStage);
   } catch (error) {
@@ -126,7 +141,7 @@ export async function translateInstagramReel(
   const whisperStage = beginStage('transcribe', stages);
   let whisperOutput: Awaited<ReturnType<typeof transcribeWithWhisper>>;
   try {
-    whisperOutput = await transcribeWithWhisper(audioPath);
+    whisperOutput = await transcribeWithWhisper(fullAudioPath);
     await fs.writeFile(transcriptPath, whisperOutput.text, 'utf8');
     completeStage(whisperStage);
     await notifyObserver(observer, whisperStage);
@@ -154,14 +169,24 @@ export async function translateInstagramReel(
   const synthStage = beginStage('synthesize', stages);
   const dubbedAudioPath = path.join(sessionDir, `${videoId}.dub.mp3`);
   try {
+    const gender = await detectVoiceGender(snippetPath);
+
     const wordsPerSecond = 2.8;
     const estimatedAudioDuration = translatedText.split(/\s+/).length / wordsPerSecond;
     let speed = estimatedAudioDuration / (videoDuration * 0.95);
     speed = Math.max(0.8, Math.min(speed, 1.5));
 
-    logger.info('Calculated TTS speed', { videoDuration, estimatedAudioDuration, finalSpeed: speed });
+    const voiceId = selectVoiceId(target, gender);
 
-    await synthesizeSpeech(translatedText, dubbedAudioPath, { speed });
+    logger.info('Calculated TTS speed', {
+      videoDuration,
+      estimatedAudioDuration,
+      finalSpeed: speed,
+      gender,
+      voiceId,
+    });
+
+    await synthesizeSpeech(translatedText, dubbedAudioPath, { speed, voiceId });
     completeStage(synthStage);
     await notifyObserver(observer, synthStage);
   } catch (error) {
@@ -173,7 +198,7 @@ export async function translateInstagramReel(
   const muxStage = beginStage('mux', stages);
   const outputVideoPath = path.join(sessionDir, `${videoId}.dub.mp4`);
   try {
-    await muxVideoWithAudio(downloadPath, dubbedAudioPath, outputVideoPath);
+    await processAndMuxVideo(downloadPath, dubbedAudioPath, outputVideoPath);
     completeStage(muxStage);
     await notifyObserver(observer, muxStage);
   } catch (error) {

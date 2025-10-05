@@ -33,7 +33,10 @@ const configSchema = z.object({
   OPENAI_TRANSLATE_MODEL: z.string().optional().default('gpt-4o-mini'),
   HUME_API_KEY: z.string().optional().default(''),
   HUME_CLIENT_SECRET: z.string().optional().default(''),
-  HUME_VOICE_ID: z.string().optional().default('octave-2-evi'),
+  HUME_VOICE_ID_RU_MALE: z.string().optional().default('40d389b7-dbe2-4f3a-b8b8-3171e3b18f0b'),
+  HUME_VOICE_ID_RU_FEMALE: z.string().optional().default('1a2e8cc5-7ca5-4db5-b799-d0e5728f7892'),
+  HUME_VOICE_ID_EN_MALE: z.string().optional().default('cb1a4fae-dad5-4729-bd73-a43f570b9117'),
+  HUME_VOICE_ID_EN_FEMALE: z.string().optional().default('5bbc32c1-a1f6-44e8-bedb-9870f23619e2'),
   HUME_AUDIO_FORMAT: z.string().optional().default('wav'),
 });
 

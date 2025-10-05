@@ -33,7 +33,7 @@ export async function synthesizeSpeech(
         utterances: [
           {
             text,
-            description: `A voice with the characteristics of: ${options.voiceId || config.HUME_VOICE_ID}`,
+            description: `A voice with the characteristics of: ${options.voiceId || config.HUME_VOICE_ID_EN_FEMALE}`,
             speed: options.speed || 1.0,
           },
         ],
