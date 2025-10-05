@@ -3,6 +3,30 @@ import { AppError, ERROR_CODES } from './errors';
 import { logger } from './logger';
 
 const ffmpegBinary = process.env['FFMPEG_PATH'] || 'ffmpeg';
+const ffprobeBinary = (process.env['FFMPEG_PATH'] || 'ffmpeg').replace(/ffmpeg$/, 'ffprobe');
+
+export async function getVideoDuration(filePath: string): Promise<number> {
+  const args = [
+    '-v', 'error',
+    '-show_entries', 'format=duration',
+    '-of', 'default=noprint_wrappers=1:nokey=1',
+    filePath
+  ];
+  try {
+    const result = await run(ffprobeBinary, args, { timeout: 30000 });
+    if (result.code !== 0) {
+      throw new Error(`ffprobe failed with code ${result.code}: ${result.stderr}`);
+    }
+    const duration = parseFloat(result.stdout.trim());
+    if (isNaN(duration)) {
+      throw new Error('Could not parse video duration.');
+    }
+    return duration;
+  } catch (error) {
+    logger.error('Failed to get video duration', { filePath, error });
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Could not determine video duration', { cause: error });
+  }
+}
 
 export async function extractAudioTrack(
   inputVideoPath: string,
@@ -46,15 +70,15 @@ export async function muxVideoWithAudio(
   const args = [
     '-y',
     '-i',
-    inputVideoPath,
+    inputVideoPath,   // Входной файл 0 (видео + старое аудио)
     '-i',
-    inputAudioPath,
-    '-map', '0:v:0',
-    '-map', '1:a:0',
+    inputAudioPath,     // Входной файл 1 (новое аудио)
+    '-map', '0:v:0',    // Взять видео из файла 0
+    '-map', '1:a:0',    // Взять аудио из файла 1
     '-c:v',
-    'copy',
+    'copy',             // Копировать видеопоток без перекодирования
     '-c:a',
-    'aac',
+    'aac',              // Перекодировать новое аудио в AAC
     '-shortest',
     outputVideoPath,
   ];

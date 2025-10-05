@@ -10,6 +10,7 @@ const HUME_TTS_URL = 'https://api.hume.ai/v0/tts/file';
 type TtsOptions = {
   voiceId?: string;
   audioFormat?: string;
+  speed?: number;
 };
 
 export async function synthesizeSpeech(
@@ -35,6 +36,7 @@ export async function synthesizeSpeech(
             description: `A voice with the characteristics of: ${options.voiceId || config.HUME_VOICE_ID}`,
           },
         ],
+        speed: options.speed || 1.0,
       },
       {
         headers: {

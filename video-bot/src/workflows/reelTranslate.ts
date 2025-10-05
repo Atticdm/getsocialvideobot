@@ -2,9 +2,8 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { detectProvider, getProvider } from '../providers';
 import { AppError, ERROR_CODES } from '../core/errors';
-import { config } from '../core/config';
 import { logger } from '../core/logger';
-import { extractAudioTrack, muxVideoWithAudio } from '../core/media';
+import { extractAudioTrack, muxVideoWithAudio, getVideoDuration } from '../core/media';
 import { transcribeWithWhisper } from '../services/whisper';
 import { translateText } from '../services/translator';
 import { synthesizeSpeech } from '../services/tts';
@@ -95,26 +94,20 @@ export async function translateInstagramReel(
   const instagram = getProvider('instagram');
 
   const downloadStage = beginStage('download', stages);
-  let downloadPath: string | null = null;
+  let downloadPath: string;
   let videoId = 'translated-reel';
+  let videoDuration = 0;
   try {
     const downloadResult = await instagram.download(url, sessionDir);
     downloadPath = downloadResult.filePath;
     videoId = downloadResult.videoInfo.id;
+    videoDuration = await getVideoDuration(downloadPath);
     completeStage(downloadStage);
     await notifyObserver(observer, downloadStage);
   } catch (error) {
     failStage(downloadStage, error);
     await notifyObserver(observer, downloadStage);
     throw error;
-  }
-
-  if (!downloadPath) {
-    throw new AppError(
-      ERROR_CODES.ERR_FILE_NOT_FOUND,
-      'Downloaded file missing',
-      { url }
-    );
   }
 
   const audioStage = beginStage('extract-audio', stages);
@@ -147,10 +140,9 @@ export async function translateInstagramReel(
 
   const translateStage = beginStage('translate', stages);
   let translatedText = '';
-  const translationPath = path.join(sessionDir, `${videoId}.translation.txt`);
   try {
     translatedText = await translateText(whisperOutput.text, source, target);
-    await fs.writeFile(translationPath, translatedText, 'utf8');
+    await fs.writeFile(path.join(sessionDir, `${videoId}.translation.txt`), translatedText, 'utf8');
     completeStage(translateStage);
     await notifyObserver(observer, translateStage);
   } catch (error) {
@@ -160,10 +152,16 @@ export async function translateInstagramReel(
   }
 
   const synthStage = beginStage('synthesize', stages);
-  const audioFormat = config.HUME_AUDIO_FORMAT || 'wav';
-  const dubbedAudioPath = path.join(sessionDir, `${videoId}.dub.${audioFormat}`);
+  const dubbedAudioPath = path.join(sessionDir, `${videoId}.dub.mp3`);
   try {
-    await synthesizeSpeech(translatedText, dubbedAudioPath);
+    const wordsPerSecond = 2.8;
+    const estimatedAudioDuration = translatedText.split(/\s+/).length / wordsPerSecond;
+    let speed = estimatedAudioDuration / (videoDuration * 0.95);
+    speed = Math.max(0.8, Math.min(speed, 1.5));
+
+    logger.info('Calculated TTS speed', { videoDuration, estimatedAudioDuration, finalSpeed: speed });
+
+    await synthesizeSpeech(translatedText, dubbedAudioPath, { speed });
     completeStage(synthStage);
     await notifyObserver(observer, synthStage);
   } catch (error) {
