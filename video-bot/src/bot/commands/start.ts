@@ -9,19 +9,15 @@ export async function startCommand(ctx: Context): Promise<void> {
     
     logger.info('Start command received', { userId, username });
     
-    const message = `🎥 **Welcome to Video Bot!**
+    const message = `🎥 Welcome!
 
-I can download public videos from Facebook, Instagram, YouTube, TikTok, LinkedIn и Sora.
+- Просто пришли ссылку на поддерживаемое видео, чтобы получить оригинал.
+- Для перевода рилсов нажми «🌐 Translate», выбери направление и затем отправь ссылку.
 
-🌐 Нужен перевод рилса?
-- Нажми кнопку «🌐 EN→RU» или «🌐 RU→EN», затем пришли ссылку на reel
-- Или просто пришли ссылку, чтобы получить оригинал
+Команда /status покажет служебную информацию (если нужна).
+Список команд: /help.`;
 
-Use /help to see available commands.
-
-Send me a video URL to download it!`;
-    
-    await ctx.reply(message, { parse_mode: 'Markdown', reply_markup: mainKeyboard.reply_markup });
+    await ctx.reply(message, { reply_markup: mainKeyboard.reply_markup });
   } catch (error) {
     logger.error('Error in start command', { error, userId: ctx.from?.id });
     await ctx.reply('Sorry, something went wrong. Please try again.');

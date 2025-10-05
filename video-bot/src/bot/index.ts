@@ -11,8 +11,11 @@ import { downloadCommand } from './commands/download';
 import { diagCommand } from './commands/diag';
 import { translateCommand } from './commands/translate';
 import { TranslationDirection } from '../types/translation';
+import { mainKeyboard, translationKeyboard } from '../ui/keyboard';
 
-const translationIntents = new Map<number, TranslationDirection>();
+type TranslationState = TranslationDirection | 'pending';
+
+const translationIntents = new Map<number, TranslationState>();
 
 async function main(): Promise<void> {
   try {
@@ -50,17 +53,13 @@ async function main(): Promise<void> {
       } finally {
         const userId = ctx.from?.id;
         if (userId) translationIntents.delete(userId);
+        await ctx.reply('Готово. Выберите дальнейшее действие.', {
+          reply_markup: mainKeyboard.reply_markup,
+        });
       }
     });
 
     // Handle keyboard buttons
-    bot.hears('📥 Download', (ctx) => {
-      ctx.reply('Please use the /download command with a Facebook video URL.\n\nExample: /download https://www.facebook.com/watch/?v=123456789');
-    });
-
-    bot.hears('❓ Help', helpCommand);
-    bot.hears('🔧 Status', statusCommand);
-
     const ensureTranslationEnabled = async (ctx: Context) => {
       if (!config.ENABLE_REEL_TRANSLATION) {
         await ctx.reply('⚙️ Функция перевода рилсов пока отключена. Установите ENABLE_REEL_TRANSLATION=1, чтобы включить её.');
@@ -81,19 +80,38 @@ async function main(): Promise<void> {
 
       translationIntents.set(userId, direction);
       const directionLabel = direction === 'en-ru' ? 'английского на русский' : 'русского на английский';
-      await ctx.reply(`Отлично! Пришлите ссылку на Instagram Reel для перевода с ${directionLabel}. Чтобы отменить режим перевода, нажмите «❌ Cancel».`);
+      await ctx.reply(`Отлично! Пришлите ссылку на Instagram Reel для перевода с ${directionLabel}.`, {
+        reply_markup: translationKeyboard.reply_markup,
+      });
     };
 
-    bot.hears('🌐 EN→RU', (ctx) => registerTranslationIntent(ctx, 'en-ru'));
-    bot.hears('🌐 RU→EN', (ctx) => registerTranslationIntent(ctx, 'ru-en'));
-    bot.hears('❌ Cancel', async (ctx) => {
+    bot.hears('🌐 Translate', async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) {
+        await ctx.reply('Не удалось определить пользователя.');
+        return;
+      }
+      const enabled = await ensureTranslationEnabled(ctx);
+      if (!enabled) return;
+
+      translationIntents.set(userId, 'pending');
+      await ctx.reply('Выберите направление перевода:', {
+        reply_markup: translationKeyboard.reply_markup,
+      });
+    });
+
+    bot.hears('🇬🇧 → 🇷🇺', (ctx) => registerTranslationIntent(ctx, 'en-ru'));
+    bot.hears('🇷🇺 → 🇬🇧', (ctx) => registerTranslationIntent(ctx, 'ru-en'));
+    bot.hears('⬅️ Back', async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) {
         await ctx.reply('Не удалось определить пользователя.');
         return;
       }
       translationIntents.delete(userId);
-      await ctx.reply('Режим перевода отключён. Отправьте ссылку напрямую, чтобы скачать оригинал, или выберите нужную кнопку заново.');
+      await ctx.reply('Режим перевода отключён.', {
+        reply_markup: mainKeyboard.reply_markup,
+      });
     });
 
     // Handle unknown messages
@@ -103,10 +121,16 @@ async function main(): Promise<void> {
 
       if (text && text.startsWith('http')) {
         if (userId && translationIntents.has(userId)) {
-          const direction = translationIntents.get(userId)!;
-          translationIntents.delete(userId);
-          ctx.message.text = `/translate ${text} ${direction}`;
-          return translateCommand(ctx);
+          const intent = translationIntents.get(userId);
+          if (intent && intent !== 'pending') {
+            translationIntents.delete(userId);
+            ctx.message.text = `/translate ${text} ${intent}`;
+            return translateCommand(ctx);
+          }
+          await ctx.reply('Сначала выберите направление перевода.', {
+            reply_markup: translationKeyboard.reply_markup,
+          });
+          return;
         }
 
         // If user sends a URL directly, treat it as a download command
@@ -115,7 +139,16 @@ async function main(): Promise<void> {
       }
 
       if (userId && translationIntents.has(userId)) {
-        await ctx.reply('Пожалуйста, пришлите ссылку на Instagram Reel, чтобы выполнить перевод, или нажмите «❌ Cancel».');
+        const intent = translationIntents.get(userId);
+        if (intent === 'pending') {
+          await ctx.reply('Выберите направление перевода:', {
+            reply_markup: translationKeyboard.reply_markup,
+          });
+        } else {
+          await ctx.reply('Пожалуйста, пришлите ссылку на Instagram Reel для перевода.', {
+            reply_markup: translationKeyboard.reply_markup,
+          });
+        }
         return;
       }
       

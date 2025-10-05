@@ -1,9 +1,12 @@
 import { Markup } from 'telegraf';
 
 export const mainKeyboard = Markup.keyboard([
-  ['📥 Download', '❓ Help'],
-  ['🌐 EN→RU', '🌐 RU→EN'],
-  ['🔧 Status', '❌ Cancel']
+  ['🌐 Translate']
+]).resize();
+
+export const translationKeyboard = Markup.keyboard([
+  ['🇬🇧 → 🇷🇺', '🇷🇺 → 🇬🇧'],
+  ['⬅️ Back']
 ]).resize();
 
 export const removeKeyboard = Markup.removeKeyboard();

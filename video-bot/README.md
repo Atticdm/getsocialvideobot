@@ -195,7 +195,7 @@ docker run -d --name video-web -p 3000:3000 \
 ### Translation Workflow
 
 - Instagram Reels only (English ↔ Russian)
-- Выбор направления: нажмите «🌐 EN→RU» или «🌐 RU→EN» в клавиатуре бота и пришлите ссылку, либо используйте `/translate <url> [en-ru|ru-en|auto]`
+- Выбор направления: нажмите «🌐 Translate», затем выберите «🇬🇧 → 🇷🇺» или «🇷🇺 → 🇬🇧» и пришлите ссылку. Альтернатива — команда `/translate <url> [en-ru|ru-en|auto]`
 - Pipeline: download → Whisper transcription → GPT translation → Hume Octave 2 TTS → ffmpeg remux
 - Detailed setup guide: [docs/REELS_TRANSLATION_SETUP.md](../docs/REELS_TRANSLATION_SETUP.md)
 
