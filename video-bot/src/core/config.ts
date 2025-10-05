@@ -27,7 +27,7 @@ const configSchema = z.object({
   // Optional: two-letter country code to try for geo-bypass (e.g. US, NL)
   GEO_BYPASS_COUNTRY: z.string().optional().default(''),
   // Translation workflow configuration
-  ENABLE_REEL_TRANSLATION: z.coerce.boolean().optional().default(false),
+  ENABLE_REEL_TRANSLATION: z.coerce.boolean().optional().default(true),
   OPENAI_API_KEY: z.string().optional().default(''),
   OPENAI_WHISPER_MODEL: z.string().optional().default('gpt-4o-mini-transcribe'),
   OPENAI_TRANSLATE_MODEL: z.string().optional().default('gpt-4o-mini'),

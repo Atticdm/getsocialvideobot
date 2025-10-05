@@ -90,7 +90,7 @@ DOWNLOAD_DIR=./.tmp
 MAX_FILE_MB=1950
 LOG_LEVEL=info
 # Enable reel translation (optional)
-ENABLE_REEL_TRANSLATION=0
+ENABLE_REEL_TRANSLATION=1
 OPENAI_API_KEY=
 OPENAI_WHISPER_MODEL=gpt-4o-mini-transcribe
 OPENAI_TRANSLATE_MODEL=gpt-4o-mini
@@ -108,7 +108,7 @@ HUME_AUDIO_FORMAT=wav
 - `DOWNLOAD_DIR`: Directory for temporary files (default: `./.tmp`)
 - `MAX_FILE_MB`: Maximum file size in MB (default: 1950)
 - `LOG_LEVEL`: Logging level (default: `info`)
-- `ENABLE_REEL_TRANSLATION`: Set to `1` to enable Instagram Reels translation workflow
+- `ENABLE_REEL_TRANSLATION`: Enabled by default (`1`); set to `0` to disable translation workflow
 - `OPENAI_API_KEY`: Required when translation is enabled (Whisper + GPT models)
 - `OPENAI_WHISPER_MODEL` / `OPENAI_TRANSLATE_MODEL`: Model overrides for transcription/translation
 - `HUME_API_KEY` / `HUME_CLIENT_SECRET`: Credentials for Hume Octave 2 TTS
