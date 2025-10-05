@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { isAxiosError } from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 import FormData from 'form-data';
@@ -45,6 +45,32 @@ export async function transcribeWithWhisper(audioPath: string): Promise<WhisperO
       detectedLanguageConfidence: data.language_confidence,
     };
   } catch (error) {
+    if (isAxiosError(error)) {
+      const responseData = error.response?.data;
+      const normalizedData = typeof responseData === 'string'
+        ? responseData.slice(0, 2000)
+        : responseData ? JSON.stringify(responseData).slice(0, 2000) : undefined;
+
+      logger.error('Whisper transcription failed', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        dataPreview: normalizedData,
+        headers: error.response?.headers,
+        url: error.config?.url,
+        method: error.config?.method,
+      });
+
+      throw new AppError(
+        ERROR_CODES.ERR_TRANSCRIPTION_FAILED,
+        'Transcription request failed',
+        {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: normalizedData,
+        }
+      );
+    }
+
     logger.error('Whisper transcription failed', {
       error: error instanceof Error ? error.message : String(error),
     });

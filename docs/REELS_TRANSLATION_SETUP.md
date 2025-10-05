@@ -9,7 +9,7 @@
    ```env
    ENABLE_REEL_TRANSLATION=1
    OPENAI_API_KEY=<выданный ключ>
-   OPENAI_WHISPER_MODEL=gpt-4o-mini-transcribe    # опционально
+   OPENAI_WHISPER_MODEL=whisper-1                  # опционально
    OPENAI_TRANSLATE_MODEL=gpt-4o-mini             # опционально
    HUME_API_KEY=<API ключ Hume>
    HUME_CLIENT_SECRET=<Secret key Hume>

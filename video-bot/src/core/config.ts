@@ -29,7 +29,7 @@ const configSchema = z.object({
   // Translation workflow configuration
   ENABLE_REEL_TRANSLATION: z.coerce.boolean().optional().default(true),
   OPENAI_API_KEY: z.string().optional().default(''),
-  OPENAI_WHISPER_MODEL: z.string().optional().default('gpt-4o-mini-transcribe'),
+  OPENAI_WHISPER_MODEL: z.string().optional().default('whisper-1'),
   OPENAI_TRANSLATE_MODEL: z.string().optional().default('gpt-4o-mini'),
   HUME_API_KEY: z.string().optional().default(''),
   HUME_CLIENT_SECRET: z.string().optional().default(''),
