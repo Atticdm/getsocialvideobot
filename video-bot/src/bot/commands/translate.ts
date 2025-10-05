@@ -116,12 +116,12 @@ export async function translateCommand(ctx: Context): Promise<void> {
         await appendProgress('🎉 Готово!');
       }
 
-      if (result.translatedText) {
-        const text = result.translatedText.length > 3500
-          ? `${result.translatedText.slice(0, 3500)}…`
-          : result.translatedText;
-        await ctx.reply(`📝 Перевод:\n\n${text}`);
-      }
+      // if (result.translatedText) {
+      //   const text = result.translatedText.length > 3500
+      //     ? `${result.translatedText.slice(0, 3500)}…`
+      //     : result.translatedText;
+      //   await ctx.reply(`📝 Перевод:\n\n${text}`);
+      // }
 
       logger.info('Translation workflow completed', {
         userId,

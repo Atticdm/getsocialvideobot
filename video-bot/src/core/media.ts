@@ -49,6 +49,8 @@ export async function muxVideoWithAudio(
     inputVideoPath,
     '-i',
     inputAudioPath,
+    '-map', '0:v:0',
+    '-map', '1:a:0',
     '-c:v',
     'copy',
     '-c:a',
