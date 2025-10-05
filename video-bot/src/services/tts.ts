@@ -34,9 +34,9 @@ export async function synthesizeSpeech(
           {
             text,
             description: `A voice with the characteristics of: ${options.voiceId || config.HUME_VOICE_ID}`,
+            speed: options.speed || 1.0,
           },
         ],
-        speed: options.speed || 1.0,
       },
       {
         headers: {
