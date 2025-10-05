@@ -4,7 +4,7 @@ import { config } from '../core/config';
 import { AppError, ERROR_CODES } from '../core/errors';
 import { logger } from '../core/logger';
 
-const HUME_TTS_URL = 'https://api.hume.ai/v0/speech/speak';
+const HUME_TTS_URL = 'https://api.hume.ai/v0/evi/synthesize';
 
 type TtsOptions = {
   voiceId?: string;
@@ -25,7 +25,6 @@ export async function synthesizeSpeech(
   }
 
   const voiceId = options.voiceId || config.HUME_VOICE_ID || 'octave-2-evi';
-  const audioFormat = options.audioFormat || config.HUME_AUDIO_FORMAT || 'wav';
 
   try {
     const response = await axios.post(
@@ -34,9 +33,6 @@ export async function synthesizeSpeech(
         text,
         voice: {
           name: voiceId,
-        },
-        config: {
-          format: audioFormat,
         },
       },
       {
