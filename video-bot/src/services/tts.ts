@@ -4,13 +4,12 @@ import { config } from '../core/config';
 import { AppError, ERROR_CODES } from '../core/errors';
 import { logger } from '../core/logger';
 
-// Новый, правильный URL для TTS API
 const HUME_TTS_URL = 'https://api.hume.ai/v0/tts/file';
 
 type TtsOptions = {
   voiceId?: string;
-  audioFormat?: string;
   speed?: number;
+  language?: 'en' | 'ru';
 };
 
 export async function synthesizeSpeech(
@@ -26,18 +25,27 @@ export async function synthesizeSpeech(
     );
   }
 
+  const requestBody: any = {
+    utterances: [
+      {
+        text: text,
+        description: `A voice with ID: ${options.voiceId}`,
+      },
+    ],
+    speed: options.speed || 1.0,
+  };
+
+  if (options.language === 'ru') {
+    requestBody.language_model = {
+      model_provider: 'HUME_AI',
+      model_resource: 'russian-v1',
+    };
+  }
+
   try {
     const response = await axios.post(
       HUME_TTS_URL,
-      {
-        utterances: [
-          {
-            text,
-            description: `A voice with the characteristics of: ${options.voiceId || config.HUME_VOICE_ID_EN_FEMALE}`,
-            speed: options.speed || 1.0,
-          },
-        ],
-      },
+      requestBody,
       {
         headers: {
           'X-Hume-Api-Key': config.HUME_API_KEY,
@@ -58,7 +66,6 @@ export async function synthesizeSpeech(
 
     if (error?.response) {
       errorDetails['status'] = error.response.status;
-      errorDetails['statusText'] = error.response.statusText;
       if (error.response.data instanceof Buffer) {
         errorDetails['data'] = error.response.data.toString('utf-8');
       } else {

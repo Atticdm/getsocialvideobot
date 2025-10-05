@@ -47,7 +47,7 @@ export async function processAndMuxVideo(
     '-y',
     '-i', originalVideoPath,
     '-i', newVoiceAudioPath,
-    '-filter_complex', '[0:a]stereotools=mlev=0.4[bg];[bg][1:a]amix=inputs=2:duration=shortest:normalize=0[a]',
+    '-filter_complex', '[0:a]stereotools=mlev=0[bg];[bg][1:a]amix=inputs=2:duration=shortest:normalize=0[a]',
     '-map', '0:v:0',
     '-map', '[a]',
     '-c:v', 'copy',
