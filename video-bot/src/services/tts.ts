@@ -25,18 +25,18 @@ export async function synthesizeSpeech(
     );
   }
 
-  const requestBody: any = {
+  const requestBody: Record<string, unknown> = {
     utterances: [
       {
-        text: text,
-        description: `A voice with ID: ${options.voiceId}`,
+        text,
+        description: `A voice with ID: ${options.voiceId || 'unknown'}`,
       },
     ],
     speed: options.speed || 1.0,
   };
 
   if (options.language === 'ru') {
-    requestBody.language_model = {
+    requestBody['language_model'] = {
       model_provider: 'HUME_AI',
       model_resource: 'russian-v1',
     };

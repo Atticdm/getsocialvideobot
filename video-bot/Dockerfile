@@ -16,7 +16,7 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
 
 # Install Python dependencies for gender detection
-RUN pip3 install librosa==0.9.2 --break-system-packages
+RUN pip3 install librosa==0.9.2 pydub==0.25.1 --break-system-packages
 
 # Create app directory
 WORKDIR /app

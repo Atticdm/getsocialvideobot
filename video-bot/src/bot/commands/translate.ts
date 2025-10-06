@@ -12,6 +12,7 @@ import * as path from 'path';
 const stageLabels: Record<TranslationStage['name'], string> = {
   download: 'Скачиваю видео',
   'extract-audio': 'Извлекаю аудио дорожку',
+  'analyze-audio': 'Анализирую голос и паузы',
   transcribe: 'Распознаю речь (Whisper)',
   translate: 'Перевожу текст (ChatGPT)',
   synthesize: 'Озвучиваю перевод (Hume)',
