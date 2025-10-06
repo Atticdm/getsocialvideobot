@@ -29,7 +29,7 @@ export async function synthesizeSpeech(
     utterances: [
       {
         text,
-        description: `A voice with ID: ${options.voiceId || 'unknown'}`,
+        ...(options.voiceId ? { voice: { id: options.voiceId }, description: `Voice preset ${options.voiceId}` } : {}),
       },
     ],
     speed: options.speed || 1.0,
