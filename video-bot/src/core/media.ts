@@ -1,26 +1,23 @@
-import { promises as fs } from 'fs';
 import { run } from './exec';
 import { AppError, ERROR_CODES } from './errors';
 import { logger } from './logger';
 
 const ffmpegBinary = process.env['FFMPEG_PATH'] || 'ffmpeg';
 
+// Функция для склейки аудио-частей и пауз в единый трек
 export async function concatenateAudioParts(partPaths: string[], outputPath: string): Promise<void> {
-  const fileList = partPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
+  const fileList = partPaths.map((p) => `file '${p}'`).join('\n');
   const concatFilePath = `${outputPath}.txt`;
-  await fs.writeFile(concatFilePath, fileList, 'utf8');
+  await require('fs/promises').writeFile(concatFilePath, fileList);
 
   const args = ['-y', '-f', 'concat', '-safe', '0', '-i', concatFilePath, '-c', 'copy', outputPath];
   const result = await run(ffmpegBinary, args, { timeout: 180000 });
   if (result.code !== 0) {
-    throw new AppError(
-      ERROR_CODES.ERR_INTERNAL,
-      'Failed to concatenate audio parts',
-      { stderr: result.stderr }
-    );
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to concatenate audio parts', { stderr: result.stderr });
   }
 }
 
+// Финальная сборка видео с новой аудиодорожкой
 export async function muxFinalVideo(
   originalVideoPath: string,
   finalAudioPath: string,
