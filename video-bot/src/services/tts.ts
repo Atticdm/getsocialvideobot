@@ -29,7 +29,12 @@ export async function synthesizeSpeech(
     utterances: [
       {
         text,
-        ...(options.voiceId ? { voice: { id: options.voiceId }, description: `Voice preset ${options.voiceId}` } : {}),
+        ...(options.voiceId
+          ? {
+              voice: { id: options.voiceId },
+              description: `Voice preset ${options.voiceId}`,
+            }
+          : {}),
       },
     ],
     speed: options.speed || 1.0,
@@ -73,7 +78,10 @@ export async function synthesizeSpeech(
       }
     }
 
-    logger.error('Hume TTS synthesis failed', { error: errorDetails });
+    logger.error({
+      err: error,
+      details: errorDetails,
+    }, 'Hume TTS synthesis failed');
     throw new AppError(
       ERROR_CODES.ERR_TTS_FAILED,
       'TTS request failed',
