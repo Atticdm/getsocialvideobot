@@ -221,10 +221,21 @@ export async function translateInstagramReel(
     throw error;
   }
 
-  const muxStage = beginStage('mux', stages);
+  // Новый этап: сборка аудио из частей
+  const assembleStage = beginStage('assemble-audio', stages);
   const finalAudioPath = path.join(sessionDir, 'final_audio.mp3');
-  await concatenateAudioParts(audioParts, finalAudioPath);
+  try {
+    await concatenateAudioParts(audioParts, finalAudioPath);
+    completeStage(assembleStage);
+    await notifyObserver(observer, assembleStage);
+  } catch (error) {
+    failStage(assembleStage, error);
+    await notifyObserver(observer, assembleStage);
+    throw error;
+  }
 
+  // Финальный mux
+  const muxStage = beginStage('mux', stages);
   const outputVideoPath = path.join(sessionDir, `${videoInfo.id}.final.mp4`);
   await muxFinalVideo(downloadPath, finalAudioPath, outputVideoPath);
   completeStage(muxStage);

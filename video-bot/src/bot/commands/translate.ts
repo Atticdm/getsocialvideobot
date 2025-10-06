@@ -13,6 +13,7 @@ const stageLabels: Record<TranslationStage['name'], string> = {
   download: 'Скачиваю видео',
   'extract-audio': 'Извлекаю аудио дорожку',
   'analyze-audio': 'Анализирую голос и паузы',
+  'assemble-audio': 'Собираю аудиодорожку',
   transcribe: 'Распознаю речь (Whisper)',
   translate: 'Перевожу текст (ChatGPT)',
   synthesize: 'Озвучиваю перевод (Hume)',

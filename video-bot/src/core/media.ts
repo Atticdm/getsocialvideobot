@@ -4,16 +4,33 @@ import { logger } from './logger';
 
 const ffmpegBinary = process.env['FFMPEG_PATH'] || 'ffmpeg';
 
-// Функция для склейки аудио-частей и пауз в единый трек
+// Новая, надежная функция для склейки аудио с помощью filter_complex
 export async function concatenateAudioParts(partPaths: string[], outputPath: string): Promise<void> {
-  const fileList = partPaths.map((p) => `file '${p}'`).join('\n');
-  const concatFilePath = `${outputPath}.txt`;
-  await require('fs/promises').writeFile(concatFilePath, fileList);
+  if (partPaths.length === 0) {
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'No audio parts to concatenate.');
+  }
 
-  const args = ['-y', '-f', 'concat', '-safe', '0', '-i', concatFilePath, '-c', 'copy', outputPath];
-  const result = await run(ffmpegBinary, args, { timeout: 180000 });
+  const inputs = partPaths.flatMap((p) => ['-i', p]);
+  const filterParts = partPaths.map((_, i) => `[${i}:a]`);
+  const filterComplex = `${filterParts.join('')}concat=n=${partPaths.length}:v=0:a=1[a]`;
+
+  const args = [
+    '-y',
+    ...inputs,
+    '-filter_complex', filterComplex,
+    '-map', '[a]',
+    '-acodec', 'libmp3lame',
+    '-q:a', '4',
+    outputPath,
+  ];
+
+  const result = await run(ffmpegBinary, args, { timeout: 240000 });
   if (result.code !== 0) {
-    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to concatenate audio parts', { stderr: result.stderr });
+    throw new AppError(
+      ERROR_CODES.ERR_INTERNAL,
+      'Failed to concatenate audio parts with filter_complex',
+      { stderr: result.stderr, args }
+    );
   }
 }
 
