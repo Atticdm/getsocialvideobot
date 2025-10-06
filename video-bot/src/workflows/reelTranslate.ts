@@ -18,11 +18,11 @@ import {
 
 const ffmpegBinary = process.env['FFMPEG_PATH'] || 'ffmpeg';
 
+type TimelineSegment = { type: 'speech' | 'pause'; start: number; end: number };
+type AudioAnalysis = { gender: 'male' | 'female' | 'unknown'; timeline: TimelineSegment[] };
+
 function beginStage(name: TranslationStage['name'], stages: TranslationStage[]): TranslationStage {
-  const stage: TranslationStage = {
-    name,
-    startedAt: Date.now(),
-  };
+  const stage: TranslationStage = { name, startedAt: Date.now() };
   stages.push(stage);
   return stage;
 }
@@ -46,19 +46,6 @@ function completeStage(stage: TranslationStage): void {
   stage.completedAt = Date.now();
 }
 
-function failStage(stage: TranslationStage, error: unknown): void {
-  stage.completedAt = Date.now();
-  stage.error = error instanceof Error ? error.message : String(error);
-}
-
-function selectVoiceId(target: WhisperLanguage, gender: 'male' | 'female' | 'unknown'): string {
-  const isRussian = target === 'ru';
-  if (isRussian) {
-    return gender === 'male' ? config.HUME_VOICE_ID_RU_MALE : config.HUME_VOICE_ID_RU_FEMALE;
-  }
-  return gender === 'male' ? config.HUME_VOICE_ID_EN_MALE : config.HUME_VOICE_ID_EN_FEMALE;
-}
-
 function resolveLanguages(direction: TranslationDirection, detected: WhisperLanguage): {
   source: WhisperLanguage;
   target: WhisperLanguage;
@@ -70,8 +57,13 @@ function resolveLanguages(direction: TranslationDirection, detected: WhisperLang
   return { source: 'unknown', target: 'ru' };
 }
 
-type TimelineSegment = { type: 'speech' | 'pause'; start: number; end: number };
-type AudioAnalysis = { gender: 'male' | 'female' | 'unknown'; timeline: TimelineSegment[] };
+function selectVoiceId(target: WhisperLanguage, gender: 'male' | 'female' | 'unknown'): string {
+  const isRussian = target === 'ru';
+  if (isRussian) {
+    return gender === 'male' ? config.HUME_VOICE_ID_RU_MALE : config.HUME_VOICE_ID_RU_FEMALE;
+  }
+  return gender === 'male' ? config.HUME_VOICE_ID_EN_MALE : config.HUME_VOICE_ID_EN_FEMALE;
+}
 
 export interface ReelTranslationOptions {
   direction: TranslationDirection;
@@ -81,7 +73,7 @@ export async function translateInstagramReel(
   url: string,
   sessionDir: string,
   options: ReelTranslationOptions,
-  observer?: (stage: TranslationStage) => void | Promise<void>
+  observer?: (stage: TranslationStage) => void
 ): Promise<TranslationResult> {
   const stages: TranslationStage[] = [];
 
@@ -96,197 +88,111 @@ export async function translateInstagramReel(
 
   const instagram = getProvider('instagram');
 
+  // 1. Скачивание
   const downloadStage = beginStage('download', stages);
-  let downloadPath: string;
-  let videoId = 'translated-reel';
-  try {
-    const downloadResult = await instagram.download(url, sessionDir);
-    downloadPath = downloadResult.filePath;
-    videoId = downloadResult.videoInfo.id;
-    completeStage(downloadStage);
-    await notifyObserver(observer, downloadStage);
-  } catch (error) {
-    failStage(downloadStage, error);
-    await notifyObserver(observer, downloadStage);
-    throw error;
-  }
+  const { filePath: downloadPath, videoInfo } = await instagram.download(url, sessionDir);
+  completeStage(downloadStage);
+  await notifyObserver(observer, downloadStage);
 
+  // 2. Извлечение полного аудио и анализ (VAD + Gender)
   const analysisStage = beginStage('analyze-audio', stages);
-  const fullAudioPath = path.join(sessionDir, `${videoId}.wav`);
-  let analysis: AudioAnalysis | null = null;
-  try {
-    await run(ffmpegBinary, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
+  const fullAudioPath = path.join(sessionDir, `${videoInfo.id}.wav`);
+  await run(ffmpegBinary, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
 
-    const analysisScriptPath = path.join(process.cwd(), 'scripts', 'detect_gender.py');
-    const analysisResult = await run('python3', [analysisScriptPath, fullAudioPath], { timeout: 60000 });
-    if (analysisResult.code !== 0) {
-      throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Audio analysis script failed', { stderr: analysisResult.stderr });
-    }
-
-    const parsed: AudioAnalysis = JSON.parse(analysisResult.stdout || '{}');
-    if (!parsed.timeline || parsed.timeline.length === 0) {
-      throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Audio analysis returned empty timeline');
-    }
-    analysis = parsed;
-    logger.info('Audio analysis complete', { gender: analysis.gender, segments: analysis.timeline.length });
-    completeStage(analysisStage);
-    await notifyObserver(observer, analysisStage);
-  } catch (error) {
-    failStage(analysisStage, error);
-    await notifyObserver(observer, analysisStage);
-    throw error;
+  const analysisScriptPath = path.join(process.cwd(), 'scripts', 'detect_gender.py');
+  const analysisResult = await run('python3', [analysisScriptPath, fullAudioPath]);
+  if (analysisResult.code !== 0) {
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Audio analysis script failed', { stderr: analysisResult.stderr });
   }
+  const { gender, timeline } = JSON.parse(analysisResult.stdout || '{}') as AudioAnalysis;
+  if (!timeline || timeline.length === 0) {
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Audio analysis returned empty timeline');
+  }
+  logger.info('Audio analysis complete', { gender, timelineSegments: timeline.length });
+  completeStage(analysisStage);
+  await notifyObserver(observer, analysisStage);
 
-  const workflowCtx: WorkflowContext = {
-    downloadPath,
-    videoId,
-    fullAudioPath,
-    timeline: analysis.timeline,
-    gender: analysis.gender,
-    stages,
-    options,
-    ...(observer ? { observer } : {}),
-  };
-
-  return continueWorkflow(workflowCtx);
-}
-
-type WorkflowContext = {
-  downloadPath: string;
-  videoId: string;
-  fullAudioPath: string;
-  timeline: TimelineSegment[];
-  gender: 'male' | 'female' | 'unknown';
-  stages: TranslationStage[];
-  observer?: ((stage: TranslationStage) => void | Promise<void>) | undefined;
-  options: ReelTranslationOptions;
-};
-
-async function continueWorkflow(ctx: WorkflowContext): Promise<TranslationResult> {
-  const { downloadPath, videoId, fullAudioPath, timeline, gender, stages, observer, options } = ctx;
-
+  // 3. Транскрипция и перевод
   const transcribeStage = beginStage('transcribe', stages);
-  let whisperOutput: Awaited<ReturnType<typeof transcribeWithWhisper>>;
-  try {
-    whisperOutput = await transcribeWithWhisper(fullAudioPath);
-    await fs.writeFile(path.join(path.dirname(fullAudioPath), `${videoId}.transcript.txt`), whisperOutput.text, 'utf8');
-    completeStage(transcribeStage);
-    await notifyObserver(observer, transcribeStage);
-  } catch (error) {
-    failStage(transcribeStage, error);
-    await notifyObserver(observer, transcribeStage);
-    throw error;
-  }
+  const whisperOutput = await transcribeWithWhisper(fullAudioPath);
+  await fs.writeFile(path.join(sessionDir, `${videoInfo.id}.transcript.txt`), whisperOutput.text, 'utf8');
+  completeStage(transcribeStage);
+  await notifyObserver(observer, transcribeStage);
 
   const { source, target } = resolveLanguages(options.direction, whisperOutput.language);
 
   const translateStage = beginStage('translate', stages);
-  let translatedText = '';
-  try {
-    translatedText = await translateText(whisperOutput.text, source, target);
-    await fs.writeFile(path.join(path.dirname(fullAudioPath), `${videoId}.translation.txt`), translatedText, 'utf8');
-    completeStage(translateStage);
-    await notifyObserver(observer, translateStage);
-  } catch (error) {
-    failStage(translateStage, error);
-    await notifyObserver(observer, translateStage);
-    throw error;
-  }
+  const translatedText = await translateText(whisperOutput.text, source, target);
+  await fs.writeFile(path.join(sessionDir, `${videoInfo.id}.translation.txt`), translatedText, 'utf8');
+  completeStage(translateStage);
+  await notifyObserver(observer, translateStage);
 
+  // 4. Пропорциональное распределение текста и синтез речи по частям
   const synthStage = beginStage('synthesize', stages);
+  const speechSegments = timeline.filter((s) => s.type === 'speech');
+  const totalSpeechDuration = speechSegments.reduce((sum, s) => sum + (s.end - s.start), 0);
+  let textOffset = 0;
   const audioParts: string[] = [];
-  try {
-    const speechSegments = timeline.filter((s) => s.type === 'speech');
-    const totalSpeechDuration = speechSegments.reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0);
 
-    const words = translatedText.trim().split(/\s+/).filter(Boolean);
-    let wordCursor = 0;
-    const totalWords = words.length;
+  for (let i = 0; i < timeline.length; i++) {
+    const segment = timeline[i]!;
+    const segmentDuration = Math.max(0.1, segment.end - segment.start);
+    const partPath = path.join(sessionDir, `part_${i}.mp3`);
 
-    for (let i = 0, speechIndex = 0; i < timeline.length; i++) {
-      const segment = timeline[i]!;
-      const segmentDuration = Math.max(0.1, segment.end - segment.start);
-      const partPath = path.join(path.dirname(fullAudioPath), `part_${i}.mp3`);
-
-      if (segment.type === 'speech') {
-        const remainingWords = totalWords - wordCursor;
-        let wordCount = remainingWords;
-        if (speechSegments.length > 0 && totalSpeechDuration > 0 && speechIndex < speechSegments.length - 1) {
-          const proportion = segmentDuration / totalSpeechDuration;
-          wordCount = Math.max(1, Math.round(proportion * totalWords));
-          wordCount = Math.min(wordCount, remainingWords);
-        }
-        if (speechIndex === speechSegments.length - 1) {
-          wordCount = remainingWords;
-        }
-
-        const segmentWords = words.slice(wordCursor, wordCursor + wordCount);
-        const textPart = segmentWords.join(' ');
-        wordCursor += wordCount;
-        speechIndex += 1;
-
-        const estimatedDuration = segmentWords.length ? segmentWords.length / 2.8 : 0.6;
-        const desiredDuration = segmentDuration * 0.95;
-        const rawSpeed = desiredDuration > 0 ? estimatedDuration / desiredDuration : 1.0;
-        const speed = Math.max(0.55, Math.min(rawSpeed, 1.9));
-        const voiceId = selectVoiceId(target, gender);
-
-        await synthesizeSpeech(textPart || '.', partPath, {
-          voiceId,
-          speed,
-          language: target === 'ru' ? 'ru' : 'en',
-        });
-      } else {
-        await run(ffmpegBinary, [
-          '-y',
-          '-f', 'lavfi',
-          '-i', 'anullsrc=r=44100:cl=mono',
-          '-t', segmentDuration.toFixed(3),
-          '-acodec', 'libmp3lame',
-          '-q:a', '4',
-          partPath,
-        ]);
+    if (segment.type === 'speech') {
+      const proportion = totalSpeechDuration > 0 ? segmentDuration / totalSpeechDuration : 1;
+      let textPartLength = Math.round(proportion * translatedText.length);
+      if (i === timeline.length - 1 || textOffset + textPartLength > translatedText.length) {
+        textPartLength = translatedText.length - textOffset;
+      }
+      if (textPartLength <= 0 && textOffset < translatedText.length) {
+        textPartLength = Math.min(20, translatedText.length - textOffset);
       }
 
-      audioParts.push(partPath);
-    }
+      const textPart = translatedText.substring(textOffset, textOffset + textPartLength);
+      textOffset += textPartLength;
 
-    if (wordCursor < totalWords && audioParts.length > 0) {
-      const remainingText = words.slice(wordCursor).join(' ');
-      if (remainingText) {
-        await synthesizeSpeech(remainingText, audioParts[audioParts.length - 1]!, {
-          voiceId: selectVoiceId(target, gender),
-          speed: 1.0,
-          language: target === 'ru' ? 'ru' : 'en',
-        });
-      }
-    }
+      const estimatedCps = textPartLength / segmentDuration;
+      const targetCps = 15; // ≈ 3 слова/сек при ~5 символов
+      const rawSpeed = estimatedCps > 0 ? estimatedCps / targetCps : 1.0;
+      const speed = Math.max(0.75, Math.min(rawSpeed, 1.6));
 
-    completeStage(synthStage);
-    await notifyObserver(observer, synthStage);
-  } catch (error) {
-    failStage(synthStage, error);
-    await notifyObserver(observer, synthStage);
-    throw error;
+      const voiceId = selectVoiceId(target, gender);
+      await synthesizeSpeech(textPart || '.', partPath, {
+        voiceId,
+        speed,
+        language: target === 'ru' ? 'ru' : 'en',
+      });
+    } else {
+      // Генерируем тишину нужной длительности
+      await run(ffmpegBinary, [
+        '-y',
+        '-f', 'lavfi',
+        '-i', 'anullsrc=r=44100:cl=mono',
+        '-t', segmentDuration.toFixed(3),
+        '-acodec', 'libmp3lame',
+        '-q:a', '4',
+        partPath,
+      ]);
+    }
+    audioParts.push(partPath);
   }
+  completeStage(synthStage);
+  await notifyObserver(observer, synthStage);
 
+  // 5. Сборка аудиодорожки и финального видео
   const muxStage = beginStage('mux', stages);
-  const finalAudioPath = path.join(path.dirname(fullAudioPath), `${videoId}.final.mp3`);
-  const outputVideoPath = path.join(path.dirname(fullAudioPath), `${videoId}.final.mp4`);
-  try {
-    await concatenateAudioParts(audioParts, finalAudioPath);
-    await muxFinalVideo(downloadPath, finalAudioPath, outputVideoPath);
-    completeStage(muxStage);
-    await notifyObserver(observer, muxStage);
-  } catch (error) {
-    failStage(muxStage, error);
-    await notifyObserver(observer, muxStage);
-    throw error;
-  }
+  const finalAudioPath = path.join(sessionDir, 'final_audio.mp3');
+  await concatenateAudioParts(audioParts, finalAudioPath);
+
+  const outputVideoPath = path.join(sessionDir, `${videoInfo.id}.final.mp4`);
+  await muxFinalVideo(downloadPath, finalAudioPath, outputVideoPath);
+  completeStage(muxStage);
+  await notifyObserver(observer, muxStage);
 
   return {
     videoPath: outputVideoPath,
-    transcriptPath: path.join(path.dirname(fullAudioPath), `${videoId}.transcript.txt`),
+    transcriptPath: path.join(sessionDir, `${videoInfo.id}.transcript.txt`),
     translatedText,
     audioPath: finalAudioPath,
     stages,
