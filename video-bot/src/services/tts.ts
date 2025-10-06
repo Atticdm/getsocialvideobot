@@ -10,6 +10,8 @@ type TtsOptions = {
   voiceId?: string;
   speed?: number;
   language?: 'en' | 'ru';
+  description?: string;
+  trailingSilence?: number;
 };
 
 export async function synthesizeSpeech(
@@ -25,19 +27,29 @@ export async function synthesizeSpeech(
     );
   }
 
+  const utterance: Record<string, unknown> = {
+    text,
+  };
+
+  if (options.voiceId) {
+    utterance['voice'] = { id: options.voiceId };
+  }
+
+  if (typeof options.speed === 'number' && Number.isFinite(options.speed)) {
+    const clampedSpeed = Math.max(0.5, Math.min(options.speed, 2));
+    utterance['speed'] = Number(clampedSpeed.toFixed(2));
+  }
+
+  if (typeof options.trailingSilence === 'number' && options.trailingSilence > 0) {
+    utterance['trailing_silence'] = Number(options.trailingSilence.toFixed(3));
+  }
+
+  if (options.description && options.description.trim().length > 0) {
+    utterance['description'] = options.description.trim();
+  }
+
   const requestBody: Record<string, unknown> = {
-    utterances: [
-      {
-        text,
-        ...(options.voiceId
-          ? {
-              voice: { id: options.voiceId },
-              description: `Voice preset ${options.voiceId}`,
-            }
-          : {}),
-      },
-    ],
-    speed: options.speed || 1.0,
+    utterances: [utterance],
   };
 
   if (options.language === 'ru') {

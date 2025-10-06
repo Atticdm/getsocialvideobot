@@ -20,6 +20,9 @@ const ffmpegBinary = process.env['FFMPEG_PATH'] || 'ffmpeg';
 
 type TimelineSegment = { type: 'speech' | 'pause'; start: number; end: number };
 type AudioAnalysis = { gender: 'male' | 'female' | 'unknown'; timeline: TimelineSegment[] };
+type SpeechUnit = { kind: 'speech'; duration: number; trailingPause: number };
+type PauseUnit = { kind: 'pause'; duration: number };
+type TimelineUnit = SpeechUnit | PauseUnit;
 
 function beginStage(name: TranslationStage['name'], stages: TranslationStage[]): TranslationStage {
   const stage: TranslationStage = { name, startedAt: Date.now() };
@@ -44,6 +47,11 @@ async function notifyObserver(
 
 function completeStage(stage: TranslationStage): void {
   stage.completedAt = Date.now();
+}
+
+function failStage(stage: TranslationStage, error: unknown): void {
+  stage.completedAt = Date.now();
+  stage.error = error instanceof Error ? error.message : String(error);
 }
 
 function resolveLanguages(direction: TranslationDirection, detected: WhisperLanguage): {
@@ -104,11 +112,14 @@ export async function translateInstagramReel(
   if (analysisResult.code !== 0) {
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Audio analysis script failed', { stderr: analysisResult.stderr });
   }
-  const { gender, timeline } = JSON.parse(analysisResult.stdout || '{}') as AudioAnalysis;
-  if (!timeline || timeline.length === 0) {
+  const analysis = JSON.parse(analysisResult.stdout || '{}') as AudioAnalysis;
+  if (!analysis.timeline || analysis.timeline.length === 0) {
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Audio analysis returned empty timeline');
   }
-  logger.info('Audio analysis complete', { gender, timelineSegments: timeline.length });
+  logger.info('Audio analysis complete', {
+    gender: analysis.gender,
+    timelineSegments: analysis.timeline.length,
+  });
   completeStage(analysisStage);
   await notifyObserver(observer, analysisStage);
 
@@ -129,58 +140,87 @@ export async function translateInstagramReel(
 
   // 4. Пропорциональное распределение текста и синтез речи по частям
   const synthStage = beginStage('synthesize', stages);
-  const speechSegments = timeline.filter((s) => s.type === 'speech');
-  const totalSpeechDuration = speechSegments.reduce((sum, s) => sum + (s.end - s.start), 0);
-  let textOffset = 0;
+  const units = buildTimelineUnits(analysis.timeline);
+  const speechUnits = units.filter((u): u is SpeechUnit => u.kind === 'speech');
+  const totalSpeechDuration = speechUnits.reduce((sum, u) => sum + u.duration, 0);
+
+  const words = translatedText.trim().split(/\s+/).filter(Boolean);
+  const totalWords = words.length;
+  let wordIndex = 0;
+  let remainingSpeechUnits = speechUnits.length;
   const audioParts: string[] = [];
 
-  for (let i = 0; i < timeline.length; i++) {
-    const segment = timeline[i]!;
-    const segmentDuration = Math.max(0.1, segment.end - segment.start);
-    const partPath = path.join(sessionDir, `part_${i}.mp3`);
-
-    if (segment.type === 'speech') {
-      const proportion = totalSpeechDuration > 0 ? segmentDuration / totalSpeechDuration : 1;
-      let textPartLength = Math.round(proportion * translatedText.length);
-      if (i === timeline.length - 1 || textOffset + textPartLength > translatedText.length) {
-        textPartLength = translatedText.length - textOffset;
+  try {
+    for (const unit of units) {
+      if (unit.kind === 'pause') {
+        if (unit.duration > 0.05) {
+          const pausePath = path.join(sessionDir, `part_${audioParts.length}.mp3`);
+          await run(ffmpegBinary, [
+            '-y',
+            '-f', 'lavfi',
+            '-i', 'anullsrc=r=44100:cl=mono',
+            '-t', unit.duration.toFixed(3),
+            '-acodec', 'libmp3lame',
+            '-q:a', '4',
+            pausePath,
+          ]);
+          audioParts.push(pausePath);
+        }
+        continue;
       }
-      if (textPartLength <= 0 && textOffset < translatedText.length) {
-        textPartLength = Math.min(20, translatedText.length - textOffset);
-      }
 
-      const textPart = translatedText.substring(textOffset, textOffset + textPartLength);
-      textOffset += textPartLength;
+      const partPath = path.join(sessionDir, `part_${audioParts.length}.mp3`);
+      remainingSpeechUnits--;
 
-      const estimatedCps = textPartLength / segmentDuration;
-      const targetCps = 15; // ≈ 3 слова/сек при ~5 символов
-      const rawSpeed = estimatedCps > 0 ? estimatedCps / targetCps : 1.0;
-      const speed = Math.max(0.75, Math.min(rawSpeed, 1.6));
+      const remainingWords = totalWords - wordIndex;
+      let wordCount = remainingSpeechUnits > 0 && totalSpeechDuration > 0
+        ? Math.max(1, Math.round((unit.duration / totalSpeechDuration) * totalWords))
+        : remainingWords;
+      wordCount = Math.min(wordCount, remainingWords);
 
-      const voiceId = selectVoiceId(target, gender);
+      const segmentWords = words.slice(wordIndex, wordIndex + wordCount);
+      wordIndex += wordCount;
+      const textPart = segmentWords.join(' ');
+
+      const estimatedDuration = segmentWords.length > 0 ? segmentWords.length / 3 : 0.6;
+      const desiredDuration = Math.max(0.1, unit.duration * 0.95);
+      const rawSpeed = estimatedDuration > 0 ? estimatedDuration / desiredDuration : 1.0;
+      const speed = Math.max(0.6, Math.min(rawSpeed, 1.8));
+
+      const voiceId = selectVoiceId(target, analysis.gender);
+      const description = buildActingInstruction(target, analysis.gender, unit.duration, videoInfo.title);
+
       await synthesizeSpeech(textPart || '.', partPath, {
         voiceId,
         speed,
         language: target === 'ru' ? 'ru' : 'en',
+        description,
+        trailingSilence: unit.trailingPause,
       });
-    } else {
-      // Генерируем тишину нужной длительности
-      await run(ffmpegBinary, [
-        '-y',
-        '-f', 'lavfi',
-        '-i', 'anullsrc=r=44100:cl=mono',
-        '-t', segmentDuration.toFixed(3),
-        '-acodec', 'libmp3lame',
-        '-q:a', '4',
-        partPath,
-      ]);
+      audioParts.push(partPath);
     }
-    audioParts.push(partPath);
-  }
-  completeStage(synthStage);
-  await notifyObserver(observer, synthStage);
 
-  // 5. Сборка аудиодорожки и финального видео
+    if (wordIndex < totalWords && audioParts.length > 0) {
+      const remainingText = words.slice(wordIndex).join(' ');
+      if (remainingText.trim().length > 0) {
+        const extraPath = path.join(sessionDir, `part_${audioParts.length}.mp3`);
+        await synthesizeSpeech(remainingText, extraPath, {
+          voiceId: selectVoiceId(target, analysis.gender),
+          language: target === 'ru' ? 'ru' : 'en',
+          description: buildActingInstruction(target, analysis.gender, Math.max(0.5, remainingText.split(/\s+/).length / 3), videoInfo.title),
+        });
+        audioParts.push(extraPath);
+      }
+    }
+
+    completeStage(synthStage);
+    await notifyObserver(observer, synthStage);
+  } catch (error) {
+    failStage(synthStage, error);
+    await notifyObserver(observer, synthStage);
+    throw error;
+  }
+
   const muxStage = beginStage('mux', stages);
   const finalAudioPath = path.join(sessionDir, 'final_audio.mp3');
   await concatenateAudioParts(audioParts, finalAudioPath);
@@ -197,4 +237,54 @@ export async function translateInstagramReel(
     audioPath: finalAudioPath,
     stages,
   };
+}
+
+function buildTimelineUnits(timeline: TimelineSegment[]): TimelineUnit[] {
+  const units: TimelineUnit[] = [];
+  let i = 0;
+  while (i < timeline.length) {
+    const segment = timeline[i]!;
+    const duration = Math.max(0, segment.end - segment.start);
+    if (segment.type === 'speech') {
+      let trailingPause = 0;
+      let j = i + 1;
+      while (j < timeline.length && timeline[j]!.type === 'pause') {
+        trailingPause += Math.max(0, timeline[j]!.end - timeline[j]!.start);
+        j++;
+      }
+      units.push({ kind: 'speech', duration: Math.max(0.1, duration), trailingPause });
+      i = j;
+    } else {
+      let totalPause = duration;
+      let j = i + 1;
+      while (j < timeline.length && timeline[j]!.type === 'pause') {
+        totalPause += Math.max(0, timeline[j]!.end - timeline[j]!.start);
+        j++;
+      }
+      units.push({ kind: 'pause', duration: Math.max(0, totalPause) });
+      i = j;
+    }
+  }
+  return units;
+}
+
+function buildActingInstruction(
+  target: WhisperLanguage,
+  gender: 'male' | 'female' | 'unknown',
+  duration: number,
+  title?: string
+): string {
+  const languageLine = target === 'ru'
+    ? 'Говори по-русски, чётко и естественно.'
+    : 'Speak in English with a clear, natural delivery.';
+  const genderLine = gender === 'male'
+    ? target === 'ru' ? 'Используй уверенный мужской тембр.' : 'Use a confident masculine tone.'
+    : gender === 'female'
+      ? target === 'ru' ? 'Используй тёплый женский тембр.' : 'Use a warm feminine tone.'
+      : target === 'ru' ? 'Поддерживай нейтральный, дружелюбный тембр.' : 'Use a neutral, friendly tone.';
+  const contextLine = title
+    ? `Контекст: ${title}.`
+    : 'Это озвучка для короткого ролика в соцсетях.';
+  const pacingLine = `Синхронизируйся с длительностью ~${duration.toFixed(1)} секунд, сохраняя энергичное повествование.`;
+  return `${languageLine} ${genderLine} ${contextLine} ${pacingLine}`.trim();
 }
