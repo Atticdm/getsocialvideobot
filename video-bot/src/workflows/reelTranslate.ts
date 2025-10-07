@@ -10,6 +10,7 @@ import { synthesizeSpeech } from '../services/tts';
 import { TranslationDirection, TranslationResult, TranslationStage, WhisperLanguage } from '../types/translation';
 import type { VideoInfo } from '../providers/types';
 import type { ExecResult } from '../core/exec';
+import { ensurePythonAudioDeps } from '../core/pythonDeps';
 
 const ffmpegBinary = process.env['FFMPEG_PATH'] || 'ffmpeg';
 
@@ -83,6 +84,7 @@ export async function translateInstagramReel(
   let analysisError: Error | undefined;
 
   try {
+    await ensurePythonAudioDeps();
     logger.info('Preparing audio for analysis', { sourceVideo: downloadPath, wavTarget: fullAudioPath, ffmpegBinary });
     ffmpegResult = await run(ffmpegBinary, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
     if (ffmpegResult.code !== 0) {
