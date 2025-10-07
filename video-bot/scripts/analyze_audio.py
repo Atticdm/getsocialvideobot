@@ -1,36 +1,46 @@
 import sys
 import json
-import librosa
-import numpy as np
-from pydub import AudioSegment
-from pyannote.audio import Pipeline
-import torch
 import os
+import traceback
 
-# Получаем токен из переменных окружения
-HF_TOKEN = os.environ.get("HF_TOKEN")
 
-def analyze_audio(file_path):
+def analyze_audio(file_path: str) -> dict:
     try:
-        if not HF_TOKEN:
+        import numpy as np  # type: ignore
+        import librosa  # type: ignore
+        from pydub import AudioSegment  # type: ignore
+        from pyannote.audio import Pipeline  # type: ignore
+        import torch  # type: ignore
+    except Exception as import_error:
+        return {
+            "speakers": {},
+            "segments": [],
+            "error": f"Failed to import required modules: {import_error}",
+            "traceback": traceback.format_exc(),
+            "stage": "imports",
+        }
+
+    hf_token = os.environ.get("HF_TOKEN")
+
+    try:
+        if not hf_token:
             raise ValueError("Hugging Face token not found. Please set the HF_TOKEN environment variable.")
 
-        # 1. Диаризация: "Кто и когда говорил"
         pipeline = Pipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1",
-            use_auth_token=HF_TOKEN
+            use_auth_token=hf_token,
         )
-        # Принудительно используем CPU, чтобы избежать проблем без GPU
         pipeline.to(torch.device("cpu"))
 
         diarization = pipeline(file_path)
 
-        # 2. Определение пола каждого спикера
         audio = AudioSegment.from_wav(file_path)
-        speakers = {}
+        speakers: dict[str, dict[str, str]] = {}
+        segments_list = []
+
         for segment, _, speaker_id in diarization.itertracks(yield_label=True):
             if speaker_id not in speakers:
-                speaker_segment = audio[segment.start * 1000 : segment.end * 1000]
+                speaker_segment = audio[segment.start * 1000: segment.end * 1000]
 
                 if len(speaker_segment) < 100:
                     continue
@@ -46,17 +56,25 @@ def analyze_audio(file_path):
 
                 speakers[speaker_id] = {"gender": gender}
 
-        segments_list = [
-            {"speaker": speaker_id, "start": round(segment.start, 3), "end": round(segment.end, 3)}
-            for segment, _, speaker_id in diarization.itertracks(yield_label=True)
-        ]
+            segments_list.append({
+                "speaker": speaker_id,
+                "start": round(segment.start, 3),
+                "end": round(segment.end, 3),
+            })
 
         return {"speakers": speakers, "segments": segments_list}
 
     except Exception as e:
-        return {"speakers": {}, "segments": [], "error": str(e)}
+        return {
+            "speakers": {},
+            "segments": [],
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "stage": "pipeline",
+        }
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         analysis_result = analyze_audio(sys.argv[1])
-        print(json.dumps(analysis_result, indent=2))
+        print(json.dumps(analysis_result))
