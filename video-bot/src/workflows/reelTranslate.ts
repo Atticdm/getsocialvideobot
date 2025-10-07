@@ -9,6 +9,7 @@ import { transcribeWithWhisper } from '../services/whisper';
 import { translateText } from '../services/translator';
 import { synthesizeSpeech } from '../services/tts';
 import { TranslationDirection, TranslationResult, TranslationStage, WhisperLanguage } from '../types/translation';
+import type { VideoInfo } from '../providers/types';
 
 const ffmpegBinary = process.env['FFMPEG_PATH'] || 'ffmpeg';
 
@@ -22,6 +23,7 @@ function completeStage(stage: TranslationStage): void { stage.completedAt = Date
 function failStage(stage: TranslationStage, error: unknown): void { stage.completedAt = Date.now(); stage.error = error instanceof Error ? error.message : String(error); }
 function resolveLanguages(direction: TranslationDirection, detected: WhisperLanguage): { source: WhisperLanguage; target: WhisperLanguage; } { if (direction === 'en-ru') return { source: 'en', target: 'ru' }; if (direction === 'ru-en') return { source: 'ru', target: 'en' }; if (detected === 'ru') return { source: 'ru', target: 'en' }; if (detected === 'en') return { source: 'en', target: 'ru' }; return { source: 'unknown', target: 'ru' }; }
 function selectVoiceId(target: WhisperLanguage, gender: 'male' | 'female' | 'unknown'): string { const isRussian = target === 'ru'; if (isRussian) { return gender === 'male' ? config.HUME_VOICE_ID_RU_MALE : config.HUME_VOICE_ID_RU_FEMALE; } return gender === 'male' ? config.HUME_VOICE_ID_EN_MALE : config.HUME_VOICE_ID_EN_FEMALE; }
+function truncateForLog(value: string | undefined | null, max = 800): string | undefined { if (!value) return value ?? undefined; if (value.length <= max) return value; return `${value.slice(0, max)}…[truncated]`; }
 
 export async function translateInstagramReel(
   url: string,
@@ -32,20 +34,60 @@ export async function translateInstagramReel(
   const stages: TranslationStage[] = [];
   const instagram = getProvider('instagram');
 
+  const startStage = (name: TranslationStage['name'], meta: Record<string, unknown> = {}) => {
+    const stage = beginStage(name, stages);
+    logger.info('Reel translation stage started', { stage: name, url, sessionDir, ...meta });
+    return stage;
+  };
+
+  const completeStageWithLog = (stage: TranslationStage, meta: Record<string, unknown> = {}) => {
+    completeStage(stage);
+    const durationMs = (stage.completedAt ?? Date.now()) - stage.startedAt;
+    logger.info('Reel translation stage completed', { stage: stage.name, durationMs, ...meta });
+  };
+
+  const failStageWithLog = (stage: TranslationStage, error: unknown, meta: Record<string, unknown> = {}) => {
+    failStage(stage, error);
+    const durationMs = (stage.completedAt ?? Date.now()) - stage.startedAt;
+    logger.error('Reel translation stage failed', {
+      stage: stage.name,
+      durationMs,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      ...meta,
+    });
+  };
+
   // 1) Download
-  const downloadStage = beginStage('download', stages);
-  const { filePath: downloadPath, videoInfo } = await instagram.download(url, sessionDir);
-  completeStage(downloadStage);
-  await notifyObserver(observer, downloadStage);
+  const downloadStage = startStage('download');
+  let downloadPath: string;
+  let videoInfo: VideoInfo;
+  try {
+    const downloadResult = await instagram.download(url, sessionDir);
+    downloadPath = downloadResult.filePath;
+    videoInfo = downloadResult.videoInfo;
+    completeStageWithLog(downloadStage, { videoPath: downloadPath, videoId: videoInfo.id });
+    await notifyObserver(observer, downloadStage);
+  } catch (error) {
+    failStageWithLog(downloadStage, error);
+    await notifyObserver(observer, downloadStage);
+    throw error;
+  }
 
   // 2) Analyze audio with Python (robust logs)
-  const analysisStage = beginStage('analyze-audio', stages);
+  const analysisStage = startStage('analyze-audio', { hasHfToken: Boolean(process.env['HF_TOKEN']) });
   let analysis: AudioAnalysis;
   try {
     const fullAudioPath = path.join(sessionDir, `${videoInfo.id}.wav`);
-    await run(ffmpegBinary, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
+    logger.info('Preparing audio for analysis', { sourceVideo: downloadPath, wavTarget: fullAudioPath, ffmpegBinary });
+    const ffmpegResult = await run(ffmpegBinary, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
+    logger.info('FFmpeg audio extraction finished', {
+      durationMs: ffmpegResult.durationMs,
+      stderrPreview: truncateForLog(ffmpegResult.stderr),
+    });
 
     const analysisScriptPath = path.join(process.cwd(), 'scripts', 'analyze_audio.py');
+    logger.info('Running audio analysis script', { script: analysisScriptPath });
     const analysisResult = await run('python3', [analysisScriptPath, fullAudioPath], { timeout: 120000 });
 
     if (analysisResult.code !== 0) {
@@ -58,50 +100,103 @@ export async function translateInstagramReel(
       throw new Error(`Audio analysis script exited with code ${analysisResult.code}`);
     }
 
+    logger.info('Audio analysis raw output', {
+      stdoutPreview: truncateForLog(analysisResult.stdout, 1200),
+      stderrPreview: truncateForLog(analysisResult.stderr),
+    });
+
     analysis = JSON.parse(analysisResult.stdout || '{}') as AudioAnalysis;
     if (analysis.error) {
       logger.error('Audio analysis returned error field', { error: analysis.error });
       throw new Error(`Audio analysis script returned an error: ${analysis.error}`);
     }
 
-    logger.info('Audio analysis complete', { speakers: Object.keys(analysis.speakers).length, segments: analysis.segments.length });
-    completeStage(analysisStage);
+    logger.info('Audio analysis complete', {
+      speakers: Object.keys(analysis.speakers).length,
+      segments: analysis.segments.length,
+    });
+    completeStageWithLog(analysisStage);
     await notifyObserver(observer, analysisStage);
   } catch (error) {
-    failStage(analysisStage, error);
+    failStageWithLog(analysisStage, error);
     await notifyObserver(observer, analysisStage);
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed during audio analysis stage', { cause: error });
   }
 
   // 3) Transcribe & Translate (unchanged apart from structure)
-  const transcribeStage = beginStage('transcribe', stages);
-  const whisperOutput = await transcribeWithWhisper(path.join(sessionDir, `${videoInfo.id}.wav`));
-  completeStage(transcribeStage);
+  const transcribeStage = startStage('transcribe', { audioPath: path.join(sessionDir, `${videoInfo.id}.wav`) });
+  let whisperOutput: Awaited<ReturnType<typeof transcribeWithWhisper>>;
+  try {
+    whisperOutput = await transcribeWithWhisper(path.join(sessionDir, `${videoInfo.id}.wav`));
+    completeStageWithLog(transcribeStage, {
+      detectedLanguage: whisperOutput.language,
+      detectedLanguageConfidence: whisperOutput.detectedLanguageConfidence,
+      transcriptLength: whisperOutput.text.length,
+    });
+  } catch (error) {
+    failStageWithLog(transcribeStage, error);
+    await notifyObserver(observer, transcribeStage);
+    throw error;
+  }
   await notifyObserver(observer, transcribeStage);
 
   const { source, target } = resolveLanguages(options.direction, whisperOutput.language);
+  logger.info('Resolved translation languages', { requestedDirection: options.direction, detected: whisperOutput.language, source, target });
 
-  const translateStage = beginStage('translate', stages);
-  const translatedText = await translateText(whisperOutput.text, source, target);
-  completeStage(translateStage);
+  const translateStage = startStage('translate', { sourceLanguage: source, targetLanguage: target });
+  let translatedText = '';
+  try {
+    translatedText = await translateText(whisperOutput.text, source, target);
+    completeStageWithLog(translateStage, {
+      translatedTextLength: translatedText.length,
+      transcriptPreview: truncateForLog(translatedText, 400),
+    });
+  } catch (error) {
+    failStageWithLog(translateStage, error);
+    await notifyObserver(observer, translateStage);
+    throw error;
+  }
   await notifyObserver(observer, translateStage);
 
   // 4) Synthesize with first speaker gender
-  const synthStage = beginStage('synthesize', stages);
   const mainSpeakerId = analysis.segments[0]?.speaker;
   const gender = mainSpeakerId ? (analysis.speakers[mainSpeakerId]?.gender || 'unknown') : 'unknown';
   const voiceId = selectVoiceId(target, gender);
   const dubbedAudioPath = path.join(sessionDir, `${videoInfo.id}.dub.mp3`);
-  await synthesizeSpeech(translatedText, dubbedAudioPath, { voiceId });
-  completeStage(synthStage);
+  const synthStage = startStage('synthesize', { voiceId, gender, targetLanguage: target });
+  try {
+    await synthesizeSpeech(translatedText, dubbedAudioPath, {
+      voiceId,
+      language: target === 'ru' ? 'ru' : 'en',
+      description: `Reel translation ${videoInfo.id}`,
+    });
+    completeStageWithLog(synthStage, { dubbedAudioPath });
+  } catch (error) {
+    failStageWithLog(synthStage, error, { voiceId });
+    await notifyObserver(observer, synthStage);
+    throw error;
+  }
   await notifyObserver(observer, synthStage);
 
   // 5) Mux
-  const muxStage = beginStage('mux', stages);
+  const muxStage = startStage('mux', { originalVideoPath: downloadPath, dubbedAudioPath });
   const outputVideoPath = path.join(sessionDir, `${videoInfo.id}.final.mp4`);
-  await muxFinalVideo(downloadPath, dubbedAudioPath, outputVideoPath);
-  completeStage(muxStage);
+  try {
+    await muxFinalVideo(downloadPath, dubbedAudioPath, outputVideoPath);
+    completeStageWithLog(muxStage, { outputVideoPath });
+  } catch (error) {
+    failStageWithLog(muxStage, error);
+    await notifyObserver(observer, muxStage);
+    throw error;
+  }
   await notifyObserver(observer, muxStage);
+
+  logger.info('Reel translation workflow completed successfully', {
+    url,
+    outputVideoPath,
+    dubbedAudioPath,
+    translatedTextLength: translatedText.length,
+  });
 
   return { videoPath: outputVideoPath, translatedText, audioPath: dubbedAudioPath, stages, transcriptPath: '' };
 }
