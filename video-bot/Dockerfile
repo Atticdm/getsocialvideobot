@@ -1,39 +1,32 @@
 FROM node:20-slim
 
-# Install system dependencies
+# Устанавливаем системные зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    python3 \
-    python3-pip \
-    ffmpeg \
-    libsndfile1 \
+    curl ca-certificates python3 python3-pip ffmpeg libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install latest yt-dlp
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-      -o /usr/local/bin/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp
+# Устанавливаем yt-dlp
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp
 
-# Install Python dependencies for gender detection
-RUN pip3 install librosa==0.9.2 pydub==0.25.1 --break-system-packages
+# Устанавливаем Python-библиотеки для аудиоанализа
+# PyTorch устанавливается отдельно для лучшего контроля версий
+RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --break-system-packages
+RUN pip3 install librosa==0.9.2 pydub==0.25.1 pyannote.audio==3.1.1 --break-system-packages
 
-# Create app directory
+# Создаем директорию приложения
 WORKDIR /app
 
-# Copy package files
+# Копируем и устанавливаем Node.js зависимости
 COPY package*.json ./
-
-# Install dependencies
 RUN npm ci
 
-# Copy source code
+# Копируем исходный код
 COPY . .
 
-# Build the application
+# Собираем TypeScript
 RUN npm run build
 
-# Set ownership
+# Устанавливаем права
 RUN chown -R node:node /app
 USER node
 
