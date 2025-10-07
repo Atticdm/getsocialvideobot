@@ -1,6 +1,5 @@
 import * as path from 'path';
 import { getProvider } from '../providers';
-import { AppError, ERROR_CODES } from '../core/errors';
 import { config } from '../core/config';
 import { logger } from '../core/logger';
 import { muxFinalVideo } from '../core/media';
@@ -10,6 +9,7 @@ import { translateText } from '../services/translator';
 import { synthesizeSpeech } from '../services/tts';
 import { TranslationDirection, TranslationResult, TranslationStage, WhisperLanguage } from '../types/translation';
 import type { VideoInfo } from '../providers/types';
+import type { ExecResult } from '../core/exec';
 
 const ffmpegBinary = process.env['FFMPEG_PATH'] || 'ffmpeg';
 
@@ -76,51 +76,71 @@ export async function translateInstagramReel(
 
   // 2) Analyze audio with Python (robust logs)
   const analysisStage = startStage('analyze-audio', { hasHfToken: Boolean(process.env['HF_TOKEN']) });
-  let analysis: AudioAnalysis;
+  const fullAudioPath = path.join(sessionDir, `${videoInfo.id}.wav`);
+  let analysis: AudioAnalysis = { speakers: {}, segments: [] };
+  let ffmpegResult: ExecResult | undefined;
+  let analysisResult: ExecResult | undefined;
+  let analysisError: Error | undefined;
+
   try {
-    const fullAudioPath = path.join(sessionDir, `${videoInfo.id}.wav`);
     logger.info('Preparing audio for analysis', { sourceVideo: downloadPath, wavTarget: fullAudioPath, ffmpegBinary });
-    const ffmpegResult = await run(ffmpegBinary, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
+    ffmpegResult = await run(ffmpegBinary, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
+    if (ffmpegResult.code !== 0) {
+      throw new Error(`FFmpeg conversion failed with code ${ffmpegResult.code}`);
+    }
     logger.info('FFmpeg audio extraction finished', {
       durationMs: ffmpegResult.durationMs,
-      stderrPreview: truncateForLog(ffmpegResult.stderr),
+      stderrPreview: truncateForLog(ffmpegResult.stderr, 2000),
     });
 
     const analysisScriptPath = path.join(process.cwd(), 'scripts', 'analyze_audio.py');
     logger.info('Running audio analysis script', { script: analysisScriptPath });
-    const analysisResult = await run('python3', [analysisScriptPath, fullAudioPath], { timeout: 120000 });
+    analysisResult = await run('python3', [analysisScriptPath, fullAudioPath], { timeout: 120000 });
 
     if (analysisResult.code !== 0) {
-      logger.error('Audio analysis script execution failed', {
-        code: analysisResult.code,
-        stderr: analysisResult.stderr,
-        stdout: analysisResult.stdout,
-        script: analysisScriptPath,
-      });
       throw new Error(`Audio analysis script exited with code ${analysisResult.code}`);
     }
 
     logger.info('Audio analysis raw output', {
-      stdoutPreview: truncateForLog(analysisResult.stdout, 1200),
-      stderrPreview: truncateForLog(analysisResult.stderr),
+      stdoutPreview: truncateForLog(analysisResult.stdout, 2000),
+      stderrPreview: truncateForLog(analysisResult.stderr, 2000),
     });
 
-    analysis = JSON.parse(analysisResult.stdout || '{}') as AudioAnalysis;
-    if (analysis.error) {
-      logger.error('Audio analysis returned error field', { error: analysis.error });
-      throw new Error(`Audio analysis script returned an error: ${analysis.error}`);
+    const parsed = JSON.parse(analysisResult.stdout || '{}') as AudioAnalysis;
+    if (parsed.error) {
+      throw new Error(`Audio analysis script returned an error: ${parsed.error}`);
     }
 
+    analysis = parsed;
     logger.info('Audio analysis complete', {
       speakers: Object.keys(analysis.speakers).length,
       segments: analysis.segments.length,
     });
     completeStageWithLog(analysisStage);
-    await notifyObserver(observer, analysisStage);
   } catch (error) {
-    failStageWithLog(analysisStage, error);
-    await notifyObserver(observer, analysisStage);
-    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed during audio analysis stage', { cause: error });
+    analysisError = error instanceof Error ? error : new Error(String(error));
+    failStageWithLog(analysisStage, analysisError, {
+      ffmpegCode: ffmpegResult?.code,
+      ffmpegStdoutPreview: truncateForLog(ffmpegResult?.stdout, 1000),
+      ffmpegStderrPreview: truncateForLog(ffmpegResult?.stderr, 2000),
+      analysisCode: analysisResult?.code,
+      analysisStdoutPreview: truncateForLog(analysisResult?.stdout, 1000),
+      analysisStderrPreview: truncateForLog(analysisResult?.stderr, 2000),
+      wavExists: ffmpegResult?.code === 0,
+    });
+    logger.info('Продолжаем без результатов аудиоанализа', {
+      fallback: true,
+      reason: analysisError.message,
+      hasHfToken: Boolean(process.env['HF_TOKEN']),
+    });
+    analysis = { speakers: {}, segments: [] };
+  }
+  await notifyObserver(observer, analysisStage);
+  if (analysisError && !/HF_TOKEN/i.test(analysisError.message)) {
+    logger.warn('Audio analysis unavailable – голос будет выбран по умолчанию', {
+      videoId: videoInfo.id,
+      sessionDir,
+    });
   }
 
   // 3) Transcribe & Translate (unchanged apart from structure)
