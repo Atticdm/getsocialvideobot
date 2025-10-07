@@ -7,7 +7,7 @@ export interface TranslationRequest {
 }
 
 export interface TranslationStage {
-  name: 'download' | 'extract-audio' | 'transcribe' | 'translate' | 'synthesize' | 'assemble-audio' | 'mux' | 'analyze-audio';
+  name: 'download' | 'analyze-audio' | 'transcribe' | 'translate' | 'synthesize' | 'mux';
   startedAt: number;
   completedAt?: number;
   error?: string;

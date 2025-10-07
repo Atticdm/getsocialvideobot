@@ -11,9 +11,7 @@ import * as path from 'path';
 
 const stageLabels: Record<TranslationStage['name'], string> = {
   download: 'Скачиваю видео',
-  'extract-audio': 'Извлекаю аудио дорожку',
   'analyze-audio': 'Анализирую голос и паузы',
-  'assemble-audio': 'Собираю аудиодорожку',
   transcribe: 'Распознаю речь (Whisper)',
   translate: 'Перевожу текст (ChatGPT)',
   synthesize: 'Озвучиваю перевод (Hume)',
@@ -55,7 +53,6 @@ export async function translateCommand(ctx: Context): Promise<void> {
 
   logger.info('Translate command received', { userId, username, url, direction });
 
-  // Rate limiting
   const status = rateLimiter.getStatus(userId);
   if (status.active >= 2) {
     await ctx.reply('⏸️ Слишком много активных переводов. Дождитесь завершения текущих задач.');
@@ -117,20 +114,6 @@ export async function translateCommand(ctx: Context): Promise<void> {
       if (statusMessageId) {
         await appendProgress('🎉 Готово!');
       }
-
-      // if (result.translatedText) {
-      //   const text = result.translatedText.length > 3500
-      //     ? `${result.translatedText.slice(0, 3500)}…`
-      //     : result.translatedText;
-      //   await ctx.reply(`📝 Перевод:\n\n${text}`);
-      // }
-
-      logger.info('Translation workflow completed', {
-        userId,
-        url,
-        stages: result.stages,
-        sessionDir,
-      });
     } finally {
       await safeRemove(sessionDir);
     }
