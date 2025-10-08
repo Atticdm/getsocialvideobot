@@ -1,10 +1,10 @@
 import { run } from './exec';
 import { AppError, ERROR_CODES } from './errors';
 import { logger } from './logger';
+import { config } from './config';
 
-const ffmpegBinary = process.env['FFMPEG_PATH'] || 'ffmpeg';
+const ffmpegBinary = config.FFMPEG_PATH || 'ffmpeg';
 
-// Новая, надежная функция для склейки аудио с помощью filter_complex
 export async function concatenateAudioParts(partPaths: string[], outputPath: string): Promise<void> {
   if (partPaths.length === 0) {
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'No audio parts to concatenate.');
@@ -17,24 +17,26 @@ export async function concatenateAudioParts(partPaths: string[], outputPath: str
   const args = [
     '-y',
     ...inputs,
-    '-filter_complex', filterComplex,
-    '-map', '[a]',
-    '-acodec', 'libmp3lame',
-    '-q:a', '4',
+    '-filter_complex',
+    filterComplex,
+    '-map',
+    '[a]',
+    '-acodec',
+    'libmp3lame',
+    '-q:a',
+    '4',
     outputPath,
   ];
 
   const result = await run(ffmpegBinary, args, { timeout: 240000 });
   if (result.code !== 0) {
-    throw new AppError(
-      ERROR_CODES.ERR_INTERNAL,
-      'Failed to concatenate audio parts with filter_complex',
-      { stderr: result.stderr, args }
-    );
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to concatenate audio parts with filter_complex', {
+      stderr: result.stderr,
+      args,
+    });
   }
 }
 
-// Финальная сборка видео с новой аудиодорожкой
 export async function muxFinalVideo(
   originalVideoPath: string,
   finalAudioPath: string,
@@ -42,12 +44,18 @@ export async function muxFinalVideo(
 ): Promise<string> {
   const args = [
     '-y',
-    '-i', originalVideoPath,
-    '-i', finalAudioPath,
-    '-map', '0:v:0',
-    '-map', '1:a:0',
-    '-c:v', 'copy',
-    '-c:a', 'aac',
+    '-i',
+    originalVideoPath,
+    '-i',
+    finalAudioPath,
+    '-map',
+    '0:v:0',
+    '-map',
+    '1:a:0',
+    '-c:v',
+    'copy',
+    '-c:a',
+    'aac',
     '-shortest',
     outputVideoPath,
   ];

@@ -1,8 +1,10 @@
+import * as path from 'path';
+import * as fs from 'fs-extra';
 import { getProvider } from '../providers';
 import { AppError, ERROR_CODES } from '../core/errors';
 import { config } from '../core/config';
 import { logger } from '../core/logger';
-import { muxFinalVideo } from '../core/media';
+import { concatenateAudioParts, muxFinalVideo } from '../core/media';
 import { run } from '../core/exec';
 import { transcribeWithWhisper } from '../services/whisper';
 import { translateText } from '../services/translator';
@@ -15,7 +17,13 @@ import {
   WhisperLanguage,
 } from '../types/translation';
 
-type TimelineSegment = { speaker: string; start: number; end: number };
+type TimelineSegment = {
+  speaker: string;
+  start: number;
+  end: number;
+  type?: 'speech' | 'silence';
+};
+
 type AudioAnalysis = {
   speakers: Record<string, { gender: 'male' | 'female' | 'unknown' }>;
   segments: TimelineSegment[];
@@ -84,53 +92,33 @@ export async function translateInstagramReel(
   const stages: TranslationStage[] = [];
   const instagram = getProvider('instagram');
 
-  // 1. Download
   const downloadStage = beginStage('download', stages);
   const { filePath: downloadPath, videoInfo } = await instagram.download(url, sessionDir);
   completeStage(downloadStage);
   await notifyObserver(observer, downloadStage);
 
-  // 2. Audio analysis
   const analysisStage = beginStage('analyze-audio', stages);
   let analysis: AudioAnalysis;
   try {
-    const originalAudioPath = paths.session.originalAudio(sessionDir, videoInfo.id);
+    const fullAudioPath = paths.session.originalAudio(sessionDir, videoInfo.id);
+    await run(config.FFMPEG_PATH, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
 
-    await run(config.FFMPEG_PATH, [
-      '-y',
-      '-i',
-      downloadPath,
-      '-ar',
-      '16000',
-      '-ac',
-      '1',
-      originalAudioPath,
-    ]);
+    const analysisResult = await run(config.PYTHON_PATH, [paths.scripts.analyzeAudio, fullAudioPath], {
+      timeout: 180000,
+    });
 
-    const analysisResult = await run(
-      config.PYTHON_PATH,
-      [paths.scripts.analyzeAudio, originalAudioPath],
-      { timeout: 120000 }
-    );
-
-    if (!analysisResult.stdout) {
-      logger.error('Audio analysis script produced no output', {
+    if (analysisResult.code !== 0 || !analysisResult.stdout) {
+      logger.error('Audio analysis script failed or produced no output', {
         code: analysisResult.code,
         stderr: analysisResult.stderr,
       });
-      throw new Error('Audio analysis script produced no output.');
+      throw new Error(`Audio analysis script failed. Stderr: ${analysisResult.stderr}`);
     }
 
     analysis = JSON.parse(analysisResult.stdout) as AudioAnalysis;
     if (analysis.error) {
       throw new Error(`Audio analysis script returned an error: ${analysis.error}`);
     }
-
-    logger.info('Audio analysis complete', {
-      speakers: Object.keys(analysis.speakers).length,
-      segments: analysis.segments.length,
-    });
-
     completeStage(analysisStage);
     await notifyObserver(observer, analysisStage);
   } catch (error) {
@@ -139,10 +127,8 @@ export async function translateInstagramReel(
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed during audio analysis stage.', { cause: error });
   }
 
-  // 3. Transcription & translation
-  const originalAudioPath = paths.session.originalAudio(sessionDir, videoInfo.id);
   const transcribeStage = beginStage('transcribe', stages);
-  const whisperOutput = await transcribeWithWhisper(originalAudioPath);
+  const whisperOutput = await transcribeWithWhisper(paths.session.originalAudio(sessionDir, videoInfo.id));
   completeStage(transcribeStage);
   await notifyObserver(observer, transcribeStage);
 
@@ -153,28 +139,93 @@ export async function translateInstagramReel(
   completeStage(translateStage);
   await notifyObserver(observer, translateStage);
 
-  // 4. Synthesis
   const synthStage = beginStage('synthesize', stages);
-  const mainSpeakerId = analysis.segments[0]?.speaker;
-  const gender = mainSpeakerId ? analysis.speakers[mainSpeakerId]?.gender || 'unknown' : 'unknown';
-  const voiceId = selectVoiceId(target, gender);
+  const audioParts: string[] = [];
+  const synthesisTasks: Array<Promise<void>> = [];
 
-  const dubbedAudioPath = paths.session.dubbedAudio(sessionDir, videoInfo.id);
-  await synthesizeSpeech(translatedText, dubbedAudioPath, { voiceId });
+  const speechSegments = analysis.segments.filter((segment) => segment.type === 'speech');
+  const totalSpeechDuration = speechSegments.reduce((sum, segment) => sum + (segment.end - segment.start), 0);
+  let textOffset = 0;
+
+  for (let i = 0; i < analysis.segments.length; i++) {
+    const segment = analysis.segments[i];
+    if (!segment) {
+      logger.warn('Timeline segment missing', { index: i });
+      continue;
+    }
+    const partPath = path.join(sessionDir, `part_${i}.mp3`);
+    audioParts.push(partPath);
+
+    if (segment.type === 'speech') {
+      const segmentDuration = segment.end - segment.start;
+      const proportion = totalSpeechDuration > 0 ? segmentDuration / totalSpeechDuration : 0;
+      const textPartLength = Math.round(proportion * translatedText.length);
+      const textPart = translatedText.substring(textOffset, textOffset + textPartLength);
+      textOffset += textPartLength;
+
+      if (textPart.trim().length > 0) {
+        synthesisTasks.push(
+          (async () => {
+            const estimatedDuration = textPart.length / 15;
+            const speed = segmentDuration > 0.1 ? estimatedDuration / segmentDuration : 1.0;
+            const cappedSpeed = Math.max(0.7, Math.min(speed, 1.8));
+            const gender = analysis.speakers[segment.speaker]?.gender || 'unknown';
+            const voiceId = selectVoiceId(target, gender);
+            await synthesizeSpeech(textPart, partPath, { voiceId, speed: cappedSpeed });
+          })()
+        );
+      } else {
+        synthesisTasks.push(
+          run(config.FFMPEG_PATH, [
+            '-f',
+            'lavfi',
+            '-i',
+            'anullsrc=r=44100',
+            '-t',
+            String(segmentDuration),
+            '-q:a',
+            '9',
+            partPath,
+          ]).then(() => undefined)
+        );
+      }
+    } else {
+      const pauseDuration = segment.end - segment.start;
+      if (pauseDuration > 0.05) {
+        synthesisTasks.push(
+          run(config.FFMPEG_PATH, [
+            '-f',
+            'lavfi',
+            '-i',
+            'anullsrc=r=44100',
+            '-t',
+            String(pauseDuration),
+            '-q:a',
+            '9',
+            partPath,
+          ]).then(() => undefined)
+        );
+      }
+    }
+  }
+
+  await Promise.all(synthesisTasks);
+  const finalAudioPath = path.join(sessionDir, 'final_audio.mp3');
+  const existingParts = audioParts.filter((partPath) => fs.existsSync(partPath));
+  await concatenateAudioParts(existingParts, finalAudioPath);
   completeStage(synthStage);
   await notifyObserver(observer, synthStage);
 
-  // 5. Mux
   const muxStage = beginStage('mux', stages);
   const outputVideoPath = paths.session.finalVideo(sessionDir, videoInfo.id);
-  await muxFinalVideo(downloadPath, dubbedAudioPath, outputVideoPath);
+  await muxFinalVideo(downloadPath, finalAudioPath, outputVideoPath);
   completeStage(muxStage);
   await notifyObserver(observer, muxStage);
 
   return {
     videoPath: outputVideoPath,
     translatedText,
-    audioPath: dubbedAudioPath,
+    audioPath: finalAudioPath,
     stages,
     transcriptPath: '',
   };
