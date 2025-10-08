@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { getProvider } from '../providers';
+import { AppError, ERROR_CODES } from '../core/errors';
 import { config } from '../core/config';
 import { logger } from '../core/logger';
 import { muxFinalVideo } from '../core/media';
@@ -82,7 +83,6 @@ export async function translateInstagramReel(
   let analysis: AudioAnalysis = { speakers: {}, segments: [] };
   let ffmpegResult: ExecResult | undefined;
   let analysisResult: ExecResult | undefined;
-  let analysisError: Error | undefined;
 
   try {
     await ensurePythonAudioDeps();
@@ -142,31 +142,34 @@ export async function translateInstagramReel(
     });
     completeStageWithLog(analysisStage);
   } catch (error) {
-    analysisError = error instanceof Error ? error : new Error(String(error));
-    failStageWithLog(analysisStage, analysisError, {
+    const err = error instanceof Error ? error : new Error(String(error));
+    failStageWithLog(analysisStage, err, {
       ffmpegCode: ffmpegResult?.code,
-      ffmpegStdoutPreview: truncateForLog(ffmpegResult?.stdout, 1000),
-      ffmpegStderrPreview: truncateForLog(ffmpegResult?.stderr, 2000),
+      ffmpegStdout: ffmpegResult?.stdout,
+      ffmpegStderr: ffmpegResult?.stderr,
       analysisCode: analysisResult?.code,
-      analysisStdoutPreview: truncateForLog(analysisResult?.stdout, 1000),
-      analysisStderrPreview: truncateForLog(analysisResult?.stderr, 2000),
+      analysisStdout: analysisResult?.stdout,
+      analysisStderr: analysisResult?.stderr,
       wavExists: ffmpegResult?.code === 0,
-      traceback: (analysisError as any)?.traceback,
+      traceback: (err as any)?.traceback,
     });
-    logger.info('Продолжаем без результатов аудиоанализа', {
-      fallback: true,
-      reason: analysisError.message,
-      hasHfToken: Boolean(process.env['HF_TOKEN']),
+    await notifyObserver(observer, analysisStage);
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Audio analysis failed', {
+      reason: err.message,
+      traceback: (err as any)?.traceback,
+      ffmpeg: {
+        code: ffmpegResult?.code,
+        stdout: ffmpegResult?.stdout,
+        stderr: ffmpegResult?.stderr,
+      },
+      analysis: {
+        code: analysisResult?.code,
+        stdout: analysisResult?.stdout,
+        stderr: analysisResult?.stderr,
+      },
     });
-    analysis = { speakers: {}, segments: [] };
   }
   await notifyObserver(observer, analysisStage);
-  if (analysisError && !/HF_TOKEN/i.test(analysisError.message)) {
-    logger.warn('Audio analysis unavailable – голос будет выбран по умолчанию', {
-      videoId: videoInfo.id,
-      sessionDir,
-    });
-  }
 
   // 3) Transcribe & Translate (unchanged apart from structure)
   const transcribeStage = startStage('transcribe', { audioPath: path.join(sessionDir, `${videoInfo.id}.wav`) });
