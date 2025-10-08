@@ -10,6 +10,8 @@ const configSchema = z.object({
   NODE_ENV: z.enum(['development', 'production']).default('development'),
   DOWNLOAD_DIR: z.string().default('./.tmp'),
   MAX_FILE_MB: z.coerce.number().positive().default(1950),
+  FFMPEG_PATH: z.string().optional().default('ffmpeg'),
+  PYTHON_PATH: z.string().optional().default('python3'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   REDIS_URL: z.string().optional().default(''),
   CACHE_PREFIX: z.string().optional().default('yeet:'),
