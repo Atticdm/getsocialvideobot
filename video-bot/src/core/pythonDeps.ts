@@ -4,19 +4,53 @@ import { logger } from './logger';
 
 let ensurePromise: Promise<void> | null = null;
 
-async function checkModules(): Promise<{ missing: string[]; resultCode: number; stdout: string; stderr: string; durationMs: number; }> {
-  const checkArgs = [
-    '-c',
-    'import importlib.util,sys;mods=["librosa","pydub","torch","torchaudio","pyannote.audio","soundfile"];missing=[m for m in mods if importlib.util.find_spec(m) is None];print(",".join(missing));sys.exit(0 if not missing else 1)',
-  ];
+type CheckResult = {
+  missing: string[];
+  needsDowngrade: boolean;
+  numpyVersion?: string;
+};
 
-  const result = await run('python3', checkArgs);
-  const missing = (result.stdout || '')
-    .split(',')
-    .map((m) => m.trim())
-    .filter((m) => m.length > 0);
+async function checkModules(): Promise<{ check: CheckResult; resultCode: number; stdout: string; stderr: string; durationMs: number; }> {
+  const checkScript = `
+import importlib.util
+import json
+import sys
+
+modules = ["librosa","pydub","torch","torchaudio","pyannote.audio","soundfile"]
+missing = [m for m in modules if importlib.util.find_spec(m) is None]
+needs_downgrade = False
+numpy_version = None
+
+try:
+    import numpy
+    numpy_version = numpy.__version__
+    major = int(numpy_version.split(".")[0])
+    if major >= 2:
+        needs_downgrade = True
+except Exception:
+    missing.append("numpy")
+
+result = {"missing": missing, "needsDowngrade": needs_downgrade, "numpyVersion": numpy_version}
+print(json.dumps(result))
+sys.exit(0 if not missing and not needs_downgrade else 1)
+`;
+
+  const result = await run('python3', ['-c', checkScript]);
+  let parsed: CheckResult = { missing: [], needsDowngrade: false };
+  try {
+    parsed = JSON.parse(result.stdout || '{}') as CheckResult;
+  } catch (error) {
+    logger.warn(
+      {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        parseError: error instanceof Error ? error.message : String(error),
+      },
+      'Failed to parse python dependency check output'
+    );
+  }
   return {
-    missing,
+    check: parsed,
     resultCode: result.code,
     stdout: result.stdout,
     stderr: result.stderr,
@@ -49,30 +83,38 @@ export async function ensurePythonAudioDeps(): Promise<void> {
   if (!ensurePromise) {
     ensurePromise = (async () => {
       const check = await checkModules();
-      if (check.resultCode === 0 || check.missing.length === 0) {
+      if (check.resultCode === 0 && !check.check.needsDowngrade) {
         logger.debug('Python audio dependencies already satisfied', {
           durationMs: check.durationMs,
+          numpyVersion: check.check.numpyVersion,
         });
         return;
       }
 
       logger.warn('Missing Python audio dependencies detected', {
-        missing: check.missing,
+        missing: check.check.missing,
+        numpyVersion: check.check.numpyVersion,
+        needsDowngrade: check.check.needsDowngrade,
         stdoutPreview: (check.stdout || '').slice(0, 800),
         stderrPreview: (check.stderr || '').slice(0, 800),
       });
 
-      await installModules(check.missing);
+      await installModules(check.check.missing);
 
       const recheck = await checkModules();
-      if (recheck.resultCode !== 0 || recheck.missing.length > 0) {
+      if (recheck.resultCode !== 0 || recheck.check.missing.length > 0 || recheck.check.needsDowngrade) {
         logger.error('Python audio dependencies missing after install attempt', {
-          missing: recheck.missing,
+          missing: recheck.check.missing,
+          numpyVersion: recheck.check.numpyVersion,
+          needsDowngrade: recheck.check.needsDowngrade,
           stdoutPreview: (recheck.stdout || '').slice(0, 800),
           stderrPreview: (recheck.stderr || '').slice(0, 800),
         });
-        throw new Error(`Python dependencies still missing: ${recheck.missing.join(', ')}`);
+        throw new Error(`Python dependencies still missing: ${recheck.check.missing.join(', ')}`);
       }
+      logger.info('Python audio dependencies verified', {
+        numpyVersion: recheck.check.numpyVersion,
+      });
     })().catch((error) => {
       ensurePromise = null;
       throw error;
