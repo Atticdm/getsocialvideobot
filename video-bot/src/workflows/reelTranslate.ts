@@ -39,26 +39,35 @@ export async function translateInstagramReel(
 
   const startStage = (name: TranslationStage['name'], meta: Record<string, unknown> = {}) => {
     const stage = beginStage(name, stages);
-    logger.info('Reel translation stage started', { stage: name, url, sessionDir, ...meta });
+    logger.info(
+      { stage: name, url, sessionDir, ...meta },
+      'Reel translation stage started'
+    );
     return stage;
   };
 
   const completeStageWithLog = (stage: TranslationStage, meta: Record<string, unknown> = {}) => {
     completeStage(stage);
     const durationMs = (stage.completedAt ?? Date.now()) - stage.startedAt;
-    logger.info('Reel translation stage completed', { stage: stage.name, durationMs, ...meta });
+    logger.info(
+      { stage: stage.name, durationMs, ...meta },
+      'Reel translation stage completed'
+    );
   };
 
   const failStageWithLog = (stage: TranslationStage, error: unknown, meta: Record<string, unknown> = {}) => {
     failStage(stage, error);
     const durationMs = (stage.completedAt ?? Date.now()) - stage.startedAt;
-    logger.error('Reel translation stage failed', {
-      stage: stage.name,
-      durationMs,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      ...meta,
-    });
+    logger.error(
+      {
+        stage: stage.name,
+        durationMs,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        ...meta,
+      },
+      'Reel translation stage failed'
+    );
   };
 
   // 1) Download
@@ -86,34 +95,47 @@ export async function translateInstagramReel(
 
   try {
     await ensurePythonAudioDeps();
-    logger.info('Preparing audio for analysis', { sourceVideo: downloadPath, wavTarget: fullAudioPath, ffmpegBinary });
+    logger.info(
+      { sourceVideo: downloadPath, wavTarget: fullAudioPath, ffmpegBinary },
+      'Preparing audio for analysis'
+    );
     ffmpegResult = await run(ffmpegBinary, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
     if (ffmpegResult.code !== 0) {
       throw new Error(`FFmpeg conversion failed with code ${ffmpegResult.code}`);
     }
-    logger.info('FFmpeg audio extraction finished', {
-      durationMs: ffmpegResult.durationMs,
-      stderrPreview: truncateForLog(ffmpegResult.stderr, 2000),
-    });
+    logger.info(
+      {
+        durationMs: ffmpegResult.durationMs,
+        ffmpegStdout: ffmpegResult.stdout,
+        ffmpegStderr: ffmpegResult.stderr,
+      },
+      'FFmpeg audio extraction finished'
+    );
 
     const analysisScriptPath = path.join(process.cwd(), 'scripts', 'analyze_audio.py');
-    logger.info('Running audio analysis script', { script: analysisScriptPath });
+    logger.info({ script: analysisScriptPath }, 'Running audio analysis script');
     analysisResult = await run('python3', [analysisScriptPath, fullAudioPath], { timeout: 120000 });
 
-    logger.info('Audio analysis raw output', {
-      exitCode: analysisResult.code,
-      stdoutPreview: truncateForLog(analysisResult.stdout, 2000),
-      stderrPreview: truncateForLog(analysisResult.stderr, 2000),
-    });
+    logger.info(
+      {
+        exitCode: analysisResult.code,
+        stdout: analysisResult.stdout,
+        stderr: analysisResult.stderr,
+      },
+      'Audio analysis raw output'
+    );
 
     let parsed: AnalysisScriptOutput | null = null;
     try {
       parsed = analysisResult.stdout ? (JSON.parse(analysisResult.stdout) as AnalysisScriptOutput) : null;
     } catch (parseError) {
-      logger.error('Failed to parse audio analysis JSON output', {
-        parseError: parseError instanceof Error ? parseError.message : String(parseError),
-        stdoutPreview: truncateForLog(analysisResult.stdout, 800),
-      });
+      logger.error(
+        {
+          parseError: parseError instanceof Error ? parseError.message : String(parseError),
+          stdout: analysisResult.stdout,
+        },
+        'Failed to parse audio analysis JSON output'
+      );
     }
 
     if (analysisResult.code !== 0) {
@@ -136,10 +158,13 @@ export async function translateInstagramReel(
     }
 
     analysis = { speakers: parsed.speakers, segments: parsed.segments };
-    logger.info('Audio analysis complete', {
-      speakers: Object.keys(analysis.speakers).length,
-      segments: analysis.segments.length,
-    });
+    logger.info(
+      {
+        speakers: Object.keys(analysis.speakers).length,
+        segments: analysis.segments.length,
+      },
+      'Audio analysis complete'
+    );
     completeStageWithLog(analysisStage);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
