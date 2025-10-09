@@ -118,12 +118,15 @@ export async function translateCommand(ctx: Context): Promise<void> {
       await safeRemove(sessionDir);
     }
   } catch (error) {
-    logger.error('Translation command failed', {
-      error,
-      userId,
-      username,
-      url,
-    });
+    logger.error(
+      {
+        error,
+        userId,
+        username,
+        url,
+      },
+      'Translation command failed'
+    );
 
     let message: string;
     if (error instanceof AppError) {

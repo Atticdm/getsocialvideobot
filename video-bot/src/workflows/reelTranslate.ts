@@ -48,10 +48,13 @@ async function notifyObserver(
   try {
     await observer(stage);
   } catch (error) {
-    logger.warn('Stage observer failed', {
-      stage: stage.name,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      {
+        stage: stage.name,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      'Stage observer failed'
+    );
   }
 }
 
@@ -108,10 +111,13 @@ export async function translateInstagramReel(
     });
 
     if (analysisResult.code !== 0 || !analysisResult.stdout) {
-      logger.error('Audio analysis script failed or produced no output', {
-        code: analysisResult.code,
-        stderr: analysisResult.stderr,
-      });
+      logger.error(
+        {
+          code: analysisResult.code,
+          stderr: analysisResult.stderr,
+        },
+        'Audio analysis script failed or produced no output'
+      );
       throw new Error(`Audio analysis script failed. Stderr: ${analysisResult.stderr}`);
     }
 
@@ -150,7 +156,7 @@ export async function translateInstagramReel(
   for (let i = 0; i < analysis.segments.length; i++) {
     const segment = analysis.segments[i];
     if (!segment) {
-      logger.warn('Timeline segment missing', { index: i });
+      logger.warn({ index: i }, 'Timeline segment missing');
       continue;
     }
     const partPath = path.join(sessionDir, `part_${i}.mp3`);
