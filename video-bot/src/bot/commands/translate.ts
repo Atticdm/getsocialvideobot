@@ -118,9 +118,19 @@ export async function translateCommand(ctx: Context): Promise<void> {
       await safeRemove(sessionDir);
     }
   } catch (error) {
+    const appError = error instanceof AppError ? error : undefined;
+    const rawCause = appError && appError.details && typeof appError.details === 'object' && 'cause' in appError.details
+      ? (appError.details as Record<string, unknown>)['cause']
+      : undefined;
+
     logger.error(
       {
-        error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        errorCode: appError?.code,
+        errorDetails: appError?.details,
+        causeMessage: rawCause instanceof Error ? rawCause.message : rawCause && typeof rawCause === 'object' && 'message' in rawCause ? (rawCause as any).message : undefined,
+        causeStack: rawCause instanceof Error ? rawCause.stack : undefined,
         userId,
         username,
         url,

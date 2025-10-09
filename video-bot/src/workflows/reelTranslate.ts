@@ -128,6 +128,16 @@ export async function translateInstagramReel(
     completeStage(analysisStage);
     await notifyObserver(observer, analysisStage);
   } catch (error) {
+    logger.error(
+      {
+        stage: 'analyze-audio',
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : String(error),
+      },
+      'Reel translation stage failed'
+    );
     failStage(analysisStage, error);
     await notifyObserver(observer, analysisStage);
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed during audio analysis stage.', { cause: error });
