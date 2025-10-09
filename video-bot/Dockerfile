@@ -9,15 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp
 
 # Устанавливаем Python-библиотеки для аудиоанализа
-# PyTorch устанавливается отдельно для лучшего контроля версий
-RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --break-system-packages
-RUN pip3 install numpy==1.26.4 --break-system-packages
-RUN pip3 install librosa==0.9.2 pydub==0.25.1 --break-system-packages
-RUN pip3 install pyannote.audio==3.1.1 --no-deps --break-system-packages
-RUN pip3 install --force-reinstall --no-cache-dir numpy==1.26.4 --break-system-packages
-
-# Создаем директорию приложения
+# Сначала копируем requirements, чтобы использовать слой кеша
 WORKDIR /app
+COPY requirements.txt ./
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt \
+ && pip3 install --no-cache-dir --force-reinstall --break-system-packages numpy==1.26.4
 
 # Копируем и устанавливаем Node.js зависимости
 COPY package*.json ./
