@@ -5,12 +5,15 @@ import traceback
 
 
 def analyze_audio(file_path: str) -> dict:
+    debug_info: dict[str, object] = {}
+
     try:
         import numpy as np  # type: ignore
         import librosa  # type: ignore
         from pydub import AudioSegment  # type: ignore
         from pyannote.audio import Pipeline  # type: ignore
         import torch  # type: ignore
+        debug_info["numpyVersion"] = np.__version__
     except Exception as import_error:
         return {
             "speakers": {},
@@ -18,6 +21,7 @@ def analyze_audio(file_path: str) -> dict:
             "error": f"Failed to import required modules: {import_error}",
             "traceback": traceback.format_exc(),
             "stage": "imports",
+            "debug": debug_info,
         }
 
     hf_token = os.environ.get("HF_TOKEN")
@@ -62,7 +66,11 @@ def analyze_audio(file_path: str) -> dict:
                 "end": round(segment.end, 3),
             })
 
-        return {"speakers": speakers, "segments": segments_list}
+        debug_info.update({
+            "speakersCount": len(speakers),
+            "segmentsCount": len(segments_list),
+        })
+        return {"speakers": speakers, "segments": segments_list, "debug": debug_info}
 
     except Exception as e:
         return {
@@ -71,6 +79,7 @@ def analyze_audio(file_path: str) -> dict:
             "error": str(e),
             "traceback": traceback.format_exc(),
             "stage": "pipeline",
+            "debug": debug_info,
         }
 
 
