@@ -110,18 +110,31 @@ export async function translateInstagramReel(
       timeout: 180000,
     });
 
+    if (analysisResult.stderr) {
+      // eslint-disable-next-line no-console
+      console.warn('PYTHON STDERR:', analysisResult.stderr.slice(0, 4000));
+      logger.warn('Python analyzer stderr', { stderrPreview: analysisResult.stderr.slice(0, 2000) });
+    }
+
     if (analysisResult.code !== 0 || !analysisResult.stdout) {
       logger.error(
         {
           code: analysisResult.code,
           stderr: analysisResult.stderr,
+          stdoutPreview: (analysisResult.stdout || '').slice(0, 400),
         },
         'Audio analysis script failed or produced no output'
       );
       throw new Error(`Audio analysis script failed. Stderr: ${analysisResult.stderr}`);
     }
 
-    analysis = JSON.parse(analysisResult.stdout) as AudioAnalysis;
+    const clean = (analysisResult.stdout || '').trim();
+    const jsonStart = clean.indexOf('{');
+    if (jsonStart < 0) {
+      throw new Error(`Could not parse analyzer JSON. Stdout head: ${clean.slice(0, 200)}`);
+    }
+    const jsonStr = clean.slice(jsonStart);
+    analysis = JSON.parse(jsonStr) as AudioAnalysis;
     if (analysis.error) {
       throw new Error(`Audio analysis script returned an error: ${analysis.error}`);
     }
