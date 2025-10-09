@@ -12,7 +12,9 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 # PyTorch устанавливается отдельно для лучшего контроля версий
 RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --break-system-packages
 RUN pip3 install numpy==1.26.4 --break-system-packages
-RUN pip3 install librosa==0.9.2 pydub==0.25.1 pyannote.audio==3.1.1 --break-system-packages
+RUN pip3 install librosa==0.9.2 pydub==0.25.1 --break-system-packages
+RUN pip3 install pyannote.audio==3.1.1 --no-deps --break-system-packages
+RUN pip3 install --force-reinstall --no-cache-dir numpy==1.26.4 --break-system-packages
 
 # Создаем директорию приложения
 WORKDIR /app
