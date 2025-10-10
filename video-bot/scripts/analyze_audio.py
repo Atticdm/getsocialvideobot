@@ -3,6 +3,8 @@ import json
 import os
 import traceback
 
+from huggingface_hub import login
+
 
 def analyze_audio(file_path: str) -> dict:
     debug_info: dict[str, object] = {}
@@ -12,6 +14,7 @@ def analyze_audio(file_path: str) -> dict:
         import librosa  # type: ignore
         from pydub import AudioSegment  # type: ignore
         from pyannote.audio import Pipeline  # type: ignore
+        from pyannote.audio import Model  # type: ignore
         import torch  # type: ignore
         debug_info["numpyVersion"] = np.__version__
     except Exception as import_error:
@@ -30,10 +33,13 @@ def analyze_audio(file_path: str) -> dict:
         if not hf_token:
             raise ValueError("Hugging Face token not found. Please set the HF_TOKEN environment variable.")
 
-        pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token=hf_token,
-        )
+        login(hf_token)
+
+        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization")
+        debug_info["pipeline"] = "pyannote/speaker-diarization"
+
+        # Ensure embedding model is available (pyannote>=3.2)
+        Model.from_pretrained("pyannote/embedding")
         pipeline.to(torch.device("cpu"))
 
         diarization = pipeline(file_path)

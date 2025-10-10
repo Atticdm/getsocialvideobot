@@ -4,9 +4,6 @@ numpy==1.26.4
 librosa==0.9.2
 pydub==0.25.1
 soundfile==0.12.1
-pyannote.audio==3.1.1
-pyannote.core==5.0.0
-pyannote.pipeline==3.0.1
-pyannote.metrics==3.2.1
+pyannote.audio==3.2.1
 einops==0.8.1
 huggingface-hub==0.23.1
