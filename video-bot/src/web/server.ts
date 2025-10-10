@@ -11,9 +11,13 @@ import { withCache } from '../core/cache';
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { createReadStream } from 'fs';
+import express from 'express';
+import cron from 'node-cron';
+import fastifyExpress from '@fastify/express';
 
 const fastify = Fastify({ logger: false });
 const PORT = Number(process.env['PORT'] || 3000);
+const PUBLIC_URL = process.env['PUBLIC_URL'] || '';
 
 // simple in-memory per-IP concurrency guard
 const activeByIp = new Map<string, number>();
@@ -92,6 +96,46 @@ function scheduleCleanup(job: Job, delayMs = 120000) {
   cancelCleanup(job);
   job.cleanupTimer = setTimeout(() => { void finalizeCleanup(job); }, delayMs);
 }
+
+// Serve /tmp statically using Express app mounted on Fastify
+(async () => {
+  try {
+    await fastify.register(fastifyExpress);
+    const staticApp = express();
+    staticApp.use('/tmp', express.static('/tmp', { fallthrough: true, maxAge: 0 }));
+    (fastify as any).use(staticApp);
+  } catch (error) {
+    logger.error({ error }, 'Failed to register static middleware');
+  }
+})();
+
+if (PUBLIC_URL) {
+  logger.info(`✅ Static /tmp is publicly available at ${PUBLIC_URL}/tmp`);
+} else {
+  logger.warn('PUBLIC_URL is not set. Inline video URLs will not be accessible.');
+}
+
+cron.schedule('*/15 * * * *', async () => {
+  try {
+    const files = await fs.readdir('/tmp');
+    const now = Date.now();
+    await Promise.all(
+      files.map(async (file) => {
+        const fullPath = path.join('/tmp', file);
+        try {
+          const stat = await fs.stat(fullPath);
+          if (now - stat.mtimeMs > 60 * 60 * 1000) {
+            await fs.remove(fullPath);
+          }
+        } catch (error) {
+          logger.warn({ file: fullPath, error }, 'Failed to process tmp file for cleanup');
+        }
+      })
+    );
+  } catch (error) {
+    logger.warn({ error }, 'Failed to scan tmp directory for cleanup');
+  }
+});
 
 fastify.get('/', async (req, reply) => {
   const initUrl = (req.query as any)?.url as string | undefined;

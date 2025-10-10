@@ -4,6 +4,8 @@ import { detectProvider, getProvider } from '../../providers';
 import { logger } from '../../core/logger';
 import { makeSessionDir, safeRemove } from '../../core/fs';
 import { ensureBelowLimit } from '../../core/size';
+import { config } from '../../core/config';
+import * as path from 'path';
 
 const INLINE_ID_PREFIX = 'dl_';
 const inlinePayloads = new Map<string, { url: string }>();
@@ -121,7 +123,7 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
       logger.warn({ error, userId: from.id }, 'Failed to DM video to user');
     }
 
-    if (fileId) {
+    if (fileId && config.PUBLIC_URL) {
       await ctx.telegram.editMessageMedia(
         undefined as any,
         undefined as any,
@@ -134,12 +136,30 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
       );
       logger.info({ url, providerName, userId: from.id }, 'Inline download finished with cached video');
     } else {
-      await ctx.telegram.editMessageText(
-        undefined as any,
-        undefined as any,
-        inlineMessageId,
-        '📨 Видео не удалось отправить автоматически. Напишите боту в личку /start, чтобы получать файлы.'
-      );
+      const httpUrl = config.PUBLIC_URL
+        ? `${config.PUBLIC_URL}/tmp/${path.basename(download.filePath)}`
+        : undefined;
+
+      if (httpUrl) {
+        await ctx.telegram.editMessageMedia(
+          undefined as any,
+          undefined as any,
+          inlineMessageId,
+          {
+            type: 'video',
+            media: httpUrl,
+            caption: download.videoInfo?.title || 'Видео',
+          }
+        );
+        logger.info({ url, providerName, userId: from.id }, 'Inline download finished via public URL');
+      } else {
+        await ctx.telegram.editMessageText(
+          undefined as any,
+          undefined as any,
+          inlineMessageId,
+          '📨 Видео не удалось отправить автоматически. Напишите боту в личку /start, чтобы получать файлы.'
+        );
+      }
     }
   } catch (error) {
     logger.error({ error, url, providerName }, 'Inline download failed');
