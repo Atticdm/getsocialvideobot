@@ -12,6 +12,7 @@ import { diagCommand } from './commands/diag';
 import { translateCommand } from './commands/translate';
 import { TranslationDirection } from '../types/translation';
 import { mainKeyboard, translationKeyboard } from '../ui/keyboard';
+import { setupInlineHandlers } from './inline';
 
 type TranslationState = TranslationDirection | 'pending';
 
@@ -58,6 +59,9 @@ async function main(): Promise<void> {
         });
       }
     });
+
+    // Register inline mode handlers
+    setupInlineHandlers(bot);
 
     // Handle keyboard buttons
     const ensureTranslationEnabled = async (ctx: Context) => {
