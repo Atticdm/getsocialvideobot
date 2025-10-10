@@ -65,17 +65,17 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
           },
         ];
       } else {
-        results = [
-          {
-            type: 'article',
-            id: encodePayload({ url }),
-            title: 'Скачать видео',
-            description: `Источник: ${provider}`,
-            input_message_content: {
-              message_text: '⏳ Обрабатываю ссылку, подождите...',
-            },
-          },
-        ];
+    results = [
+      {
+        type: 'article',
+        id: encodePayload({ url }),
+        title: 'Скачать видео',
+        description: `Источник: ${provider}`,
+        input_message_content: {
+          message_text: `⏳ Обрабатываю ссылку…\n${url}`,
+        },
+      },
+    ];
       }
     }
 
@@ -114,18 +114,34 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
     const download = await provider.download(url, sessionDir);
     await ensureBelowLimit(download.filePath);
 
-    await ctx.telegram.editMessageMedia(
-      undefined as any,
-      undefined as any,
-      inlineMessageId,
-      {
-        type: 'video',
-        media: { source: download.filePath },
-        caption: download.videoInfo?.title || 'Видео',
-      }
-    );
+    let fileId: string | undefined;
+    try {
+      const sent = await ctx.telegram.sendVideo(from.id, { source: download.filePath }, { disable_notification: true });
+      fileId = sent.video?.file_id;
+    } catch (error) {
+      logger.warn({ error, userId: from.id }, 'Failed to DM video to user');
+    }
 
-    logger.info({ url, providerName, userId: from.id }, 'Inline download finished');
+    if (fileId) {
+      await ctx.telegram.editMessageMedia(
+        undefined as any,
+        undefined as any,
+        inlineMessageId,
+        {
+          type: 'video',
+          media: fileId,
+          caption: download.videoInfo?.title || 'Видео',
+        }
+      );
+      logger.info({ url, providerName, userId: from.id }, 'Inline download finished with cached video');
+    } else {
+      await ctx.telegram.editMessageText(
+        undefined as any,
+        undefined as any,
+        inlineMessageId,
+        '📨 Видео не удалось отправить автоматически. Напишите боту в личку /start, чтобы получать файлы.'
+      );
+    }
   } catch (error) {
     logger.error({ error, url, providerName }, 'Inline download failed');
     await ctx.telegram.editMessageText(
