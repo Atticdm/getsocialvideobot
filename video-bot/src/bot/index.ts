@@ -47,6 +47,9 @@ async function main(): Promise<void> {
     bot.command('help', helpCommand);
     bot.command('status', statusCommand);
     bot.command('download', downloadCommand);
+    // Aliases for group usage (easier to type with mention): /dl, /get
+    bot.command('dl', downloadCommand);
+    bot.command('get', downloadCommand);
     bot.command('diag', diagCommand);
     bot.command('translate', async (ctx) => {
       try {
