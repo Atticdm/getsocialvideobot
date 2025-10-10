@@ -5,22 +5,21 @@ import { logger } from '../../core/logger';
 import { makeSessionDir, safeRemove } from '../../core/fs';
 import { ensureBelowLimit } from '../../core/size';
 
-const INLINE_ID_PREFIX = 'download:';
+const INLINE_ID_PREFIX = 'dl_';
+const inlinePayloads = new Map<string, { url: string }>();
 
 function encodePayload(payload: { url: string }): string {
-  return INLINE_ID_PREFIX + Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64');
+  const raw = Buffer.from(JSON.stringify(payload), 'utf-8')
+    .toString('base64')
+    .replace(/[^a-zA-Z0-9]/g, '');
+  const id = INLINE_ID_PREFIX + raw.slice(0, 48);
+  inlinePayloads.set(id, payload);
+  return id;
 }
 
 function decodePayload(id: string): { url: string } | null {
   if (!id.startsWith(INLINE_ID_PREFIX)) return null;
-  try {
-    const raw = Buffer.from(id.slice(INLINE_ID_PREFIX.length), 'base64').toString('utf-8');
-    const parsed = JSON.parse(raw);
-    if (typeof parsed?.url === 'string') return { url: parsed.url };
-  } catch (error) {
-    logger.warn({ id, error }, 'Failed to decode inline payload');
-  }
-  return null;
+  return inlinePayloads.get(id) || null;
 }
 
 function extractUrl(text: string | undefined): string | null {
