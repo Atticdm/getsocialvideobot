@@ -39,7 +39,7 @@ def analyze_audio(file_path: str) -> dict:
         debug_info["pipeline"] = "pyannote/speaker-diarization"
 
         # Ensure embedding model is available (pyannote>=3.2)
-        Model.from_pretrained("pyannote/embedding")
+        Model.from_pretrained("pyannote/embedding", strict=False)
         pipeline.to(torch.device("cpu"))
 
         diarization = pipeline(file_path)
