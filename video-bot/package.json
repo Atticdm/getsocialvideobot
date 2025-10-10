@@ -28,7 +28,6 @@
     "dotenv": "^16.3.1",
     "execa": "^8.0.1",
     "express": "^5.1.0",
-    "fastify": "^5.6.0",
     "form-data": "^4.0.2",
     "fs-extra": "^11.2.0",
     "ioredis": "^5.8.0",

@@ -123,7 +123,7 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
       logger.warn({ error, userId: from.id }, 'Failed to DM video to user');
     }
 
-    if (fileId && config.PUBLIC_URL) {
+    if (fileId) {
       await ctx.telegram.editMessageMedia(
         undefined as any,
         undefined as any,

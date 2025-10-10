@@ -1,5 +1,6 @@
-import Fastify from 'fastify';
+import express from 'express';
 import { createHash } from 'crypto';
+import cron from 'node-cron';
 import { detectProvider, getProvider } from '../providers';
 import { ensureTempDir, makeSessionDir, safeRemove } from '../core/fs';
 import { logger } from '../core/logger';
@@ -7,17 +8,25 @@ import { AppError, toUserMessage } from '../core/errors';
 import { ensureBelowLimit } from '../core/size';
 import { run } from '../core/exec';
 import { withCache } from '../core/cache';
-// NOTE: AppError types are used in provider layer; web job converts to plain message
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { createReadStream } from 'fs';
-import express from 'express';
-import cron from 'node-cron';
-import fastifyExpress from '@fastify/express';
+import { config } from '../core/config';
 
-const fastify = Fastify({ logger: false });
+const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
 const PORT = Number(process.env['PORT'] || 3000);
-const PUBLIC_URL = process.env['PUBLIC_URL'] || '';
+const PUBLIC_URL = config.PUBLIC_URL || process.env['PUBLIC_URL'] || '';
+
+app.use('/tmp', express.static('/tmp', { maxAge: 0 }));
+
+if (PUBLIC_URL) {
+  logger.info(`✅ Static /tmp is publicly available at ${PUBLIC_URL}/tmp`);
+} else {
+  logger.warn('PUBLIC_URL is not set. Inline video URLs will not be accessible.');
+}
 
 // simple in-memory per-IP concurrency guard
 const activeByIp = new Map<string, number>();
@@ -32,19 +41,19 @@ type Job = {
   fileName?: string;
   error?: string;
   sessionDir?: string;
-  // streaming control
   activeStreams?: number;
-  cleanupTimer?: any;
+  cleanupTimer?: NodeJS.Timeout | null;
 };
+
 const jobs = new Map<string, Job>();
 
-function newId() {
+function newId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 async function startJob(url: string): Promise<Job> {
   const id = newId();
-  const job: Job = { id, url, status: 'pending', activeStreams: 0 };
+  const job: Job = { id, url, status: 'pending', activeStreams: 0, cleanupTimer: null };
   jobs.set(id, job);
 
   (async () => {
@@ -60,22 +69,26 @@ async function startJob(url: string): Promise<Job> {
       job.filePath = result.filePath;
       job.fileName = path.basename(result.filePath);
       job.status = 'ready';
-    } catch (e: any) {
-      logger.warn('Job failed', { url, error: e?.message || String(e), code: e?.code, details: e?.details ? 'has_details' : 'none' });
-      job.error = e?.message || 'Failed';
-      if (e && e.code) (job as any).errorCode = e.code;
-      // Try propagate stderr preview to UI for faster diagnostics
+    } catch (error: any) {
+      logger.warn('Job failed', {
+        url,
+        error: error?.message || String(error),
+        code: error?.code,
+        details: error?.details ? 'has_details' : 'none',
+      });
+      job.error = error?.message || 'Failed';
+      if (error && error.code) (job as any).errorCode = error.code;
       try {
-        const stderr = e?.details?.stderr || e?.stderr;
+        const stderr = error?.details?.stderr || error?.stderr;
         if (stderr && typeof stderr === 'string') {
           job.error += ' — ' + String(stderr).slice(0, 300);
         }
       } catch {}
       job.status = 'error';
     }
-  })().catch((e) => {
-    logger.error('Unexpected job error', { error: e });
-    job.error = e?.message || 'Unexpected error';
+  })().catch((error) => {
+    logger.error('Unexpected job error', { error });
+    job.error = error?.message || 'Unexpected error';
     job.status = 'error';
   });
 
@@ -83,36 +96,25 @@ async function startJob(url: string): Promise<Job> {
 }
 
 function cancelCleanup(job: Job) {
-  if (job.cleanupTimer) { clearTimeout(job.cleanupTimer); job.cleanupTimer = undefined; }
+  if (job.cleanupTimer) {
+    clearTimeout(job.cleanupTimer);
+    job.cleanupTimer = null;
+  }
 }
 
 async function finalizeCleanup(job: Job) {
-  try { await safeRemove(job.sessionDir || ''); } catch {}
+  try {
+    await safeRemove(job.sessionDir || '');
+  } catch {}
   jobs.delete(job.id);
 }
 
 function scheduleCleanup(job: Job, delayMs = 120000) {
   if ((job.activeStreams || 0) > 0) return;
   cancelCleanup(job);
-  job.cleanupTimer = setTimeout(() => { void finalizeCleanup(job); }, delayMs);
-}
-
-// Serve /tmp statically using Express app mounted on Fastify
-(async () => {
-  try {
-    await fastify.register(fastifyExpress);
-    const staticApp = express();
-    staticApp.use('/tmp', express.static('/tmp', { fallthrough: true, maxAge: 0 }));
-    (fastify as any).use(staticApp);
-  } catch (error) {
-    logger.error({ error }, 'Failed to register static middleware');
-  }
-})();
-
-if (PUBLIC_URL) {
-  logger.info(`✅ Static /tmp is publicly available at ${PUBLIC_URL}/tmp`);
-} else {
-  logger.warn('PUBLIC_URL is not set. Inline video URLs will not be accessible.');
+  job.cleanupTimer = setTimeout(() => {
+    void finalizeCleanup(job);
+  }, delayMs);
 }
 
 cron.schedule('*/15 * * * *', async () => {
@@ -137,8 +139,8 @@ cron.schedule('*/15 * * * *', async () => {
   }
 });
 
-fastify.get('/', async (req, reply) => {
-  const initUrl = (req.query as any)?.url as string | undefined;
+app.get('/', async (req, res) => {
+  const initUrl = req.query?.['url'] as string | undefined;
   const html = `<!doctype html>
   <html lang="en">
   <head>
@@ -186,15 +188,14 @@ fastify.get('/', async (req, reply) => {
     </script>
   </body>
   </html>`;
-  reply.header('Cache-Control','no-store');
-  reply.type('text/html').send(html);
+  res.set('Cache-Control', 'no-store');
+  return res.type('text/html').send(html);
 });
 
-// Single-request download endpoint: download then stream in same response
-fastify.get('/download_video', async (req, reply) => {
-  const url = (req.query as any)?.url as string | undefined;
+app.get('/download_video', async (req, res) => {
+  const url = req.query?.['url'] as string | undefined;
   logger.info('DEBUG: download_video called', { url, query: req.query });
-  if (!url) return reply.code(400).send({ error: 'Missing url' });
+  if (!url) return res.status(400).json({ error: 'Missing url' });
 
   await ensureTempDir();
   const sessionDir = await makeSessionDir();
@@ -202,7 +203,7 @@ fastify.get('/download_video', async (req, reply) => {
   try {
     const providerName = detectProvider(url);
     logger.info('DEBUG: provider detected', { providerName, url });
-    if (!providerName) return reply.code(400).send({ error: 'Unsupported provider' });
+    if (!providerName) return res.status(400).json({ error: 'Unsupported provider' });
     const provider = getProvider(providerName);
     logger.info('DEBUG: starting download', { providerName, sessionDir });
     const result = await provider.download(url, sessionDir);
@@ -212,47 +213,56 @@ fastify.get('/download_video', async (req, reply) => {
 
     const fileName = path.basename(filePath);
     const ext = path.extname(fileName).toLowerCase();
-    const mime = ext === '.mp4' ? 'video/mp4' : ext === '.webm' ? 'video/webm' : ext === '.mkv' ? 'video/x-matroska' : 'application/octet-stream';
+    const mime =
+      ext === '.mp4'
+        ? 'video/mp4'
+        : ext === '.webm'
+        ? 'video/webm'
+        : ext === '.mkv'
+        ? 'video/x-matroska'
+        : 'application/octet-stream';
     const st = await fs.stat(filePath);
 
-    reply.header('X-Accel-Buffering', 'no');
-    reply.header('Cache-Control', 'no-store');
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Content-Type', mime);
-    reply.header('Content-Length', String(st.size));
-    reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.set({
+      'X-Accel-Buffering': 'no',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Type': mime,
+      'Content-Length': String(st.size),
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+    });
 
     const stream = createReadStream(filePath);
-    const done = new Promise<void>((resolve) => {
-      stream.on('close', () => resolve());
-      stream.on('error', () => resolve());
-      reply.raw.on('close', () => resolve());
-      reply.raw.on('finish', () => resolve());
+    stream.pipe(res);
+    stream.on('error', (err) => {
+      logger.error('Stream error', { url, message: err.message });
+      res.destroy(err);
     });
-    
-    reply.send(stream);
-    await done;
-    
-    // Clean up after streaming is complete
+    res.on('close', () => {
+      stream.destroy();
+    });
+    await new Promise<void>((resolve) => {
+      res.on('finish', resolve);
+      res.on('close', resolve);
+    });
+
     if (sessionDir) await safeRemove(sessionDir).catch(() => undefined);
-  } catch (e: any) {
-    logger.error('download_video failed', { url, message: e?.message, code: e?.code, details: e?.details });
-    if (e instanceof AppError) return reply.code(400).send({ error: toUserMessage(e) });
-    return reply.code(500).send({ error: 'Internal server error' });
+    return;
+  } catch (error: any) {
+    logger.error('download_video failed', { url, message: error?.message, code: error?.code, details: error?.details });
+    if (error instanceof AppError) return res.status(400).json({ error: toUserMessage(error) });
+    return res.status(500).json({ error: 'Internal server error' });
   } finally {
-    // Only clean up if there was an error before streaming started
     if (sessionDir && !filePath) await safeRemove(sessionDir).catch(() => undefined);
   }
 });
 
-fastify.post('/get-video-link', async (req, reply) => {
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  const rawUrlValue = body['url'];
-  const rawUrl = typeof rawUrlValue === 'string' ? rawUrlValue.trim() : '';
-  if (!rawUrl) return reply.code(400).send({ error: 'Missing url' });
+app.post('/get-video-link', async (req, res) => {
+  const rawUrl = (req.body?.url || '').toString().trim();
+  if (!rawUrl) return res.status(400).json({ error: 'Missing url' });
 
   const providerName = detectProvider(rawUrl);
-  if (!providerName) return reply.code(400).send({ error: 'Unsupported provider' });
+  if (!providerName) return res.status(400).json({ error: 'Unsupported provider' });
 
   const cacheKey = `metadata:${providerName}:${createHash('sha1').update(rawUrl).digest('hex')}`;
 
@@ -263,68 +273,64 @@ fastify.post('/get-video-link', async (req, reply) => {
       return provider.metadata(rawUrl);
     });
 
-    return reply.send(metadata);
+    return res.json(metadata);
   } catch (error) {
     if (error instanceof AppError) {
-      return reply.code(400).send({ error: toUserMessage(error) });
+      return res.status(400).json({ error: toUserMessage(error) });
     }
     logger.error('get-video-link failed', { url: rawUrl, error });
-    return reply.code(500).send({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Kick off job, return progress page that polls /status and redirects to /file/:id when ready
-fastify.get('/download', async (req, reply) => {
-  const url = (req.query as any)?.url as string | undefined;
-  const q = url ? ('?url=' + encodeURIComponent(url)) : '';
-  reply.header('Content-Type','text/html').send(`<!doctype html><meta http-equiv="refresh" content="0; url=/${q}">`);
+app.get('/download', async (req, res) => {
+  const url = req.query?.['url'] as string | undefined;
+  const q = url ? '?url=' + encodeURIComponent(url) : '';
+  return res.type('text/html').send(`<!doctype html><meta http-equiv="refresh" content="0; url=/${q}">`);
 });
 
-// Start job via AJAX from the main page
-fastify.post('/api/start', async (req, reply) => {
+app.post('/api/start', async (req, res) => {
   try {
-    const body = (req.body as any) || {};
-    const url = (body.url || '').toString();
-    if (!url) return reply.code(400).send({ error: 'Missing url' });
-    const count = activeByIp.get(req.ip) || 0;
-    if (count >= MAX_PER_IP) return reply.code(429).send({ error: 'Too many concurrent downloads from this IP' });
-    activeByIp.set(req.ip, count + 1);
+    const url = (req.body?.url || '').toString();
+    if (!url) return res.status(400).json({ error: 'Missing url' });
+    const ip = (req.ip || req.socket.remoteAddress || 'unknown').toString();
+    const count = activeByIp.get(ip) || 0;
+    if (count >= MAX_PER_IP) return res.status(429).json({ error: 'Too many concurrent downloads from this IP' });
+    activeByIp.set(ip, count + 1);
     const job = await startJob(url);
-    activeByIp.set(req.ip, Math.max(0, (activeByIp.get(req.ip) || 1) - 1));
-    reply.send({ id: job.id });
-  } catch (e) {
-    logger.error('api/start failed', { error: e });
-    reply.code(500).send({ error: 'Failed to start' });
+    activeByIp.set(ip, Math.max(0, (activeByIp.get(ip) || 1) - 1));
+    return res.json({ id: job.id });
+  } catch (error) {
+    logger.error('api/start failed', { error });
+    return res.status(500).json({ error: 'Failed to start' });
   }
 });
 
-// Job status
-fastify.get('/status', async (req, reply) => {
-  const id = (req.query as any)?.id as string;
-  const job = id && jobs.get(id);
-  if (!job) return reply.code(404).send({ error: 'Not found' });
-  reply.send({ status: job.status, error: job.error || undefined, errorCode: (job as any).errorCode || undefined });
+app.get('/status', async (req, res) => {
+  const id = (req.query?.['id'] as string | undefined) ?? '';
+  const job = id ? jobs.get(id) : undefined;
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  return res.json({ status: job.status, error: job.error || undefined, errorCode: (job as any).errorCode || undefined });
 });
 
-// File streaming endpoint (forced download)
-fastify.get('/file/:id', async (req, reply) => {
-  const id = (req.params as any)?.id as string;
-  const job = id && jobs.get(id);
-  if (!job) return reply.code(404).send({ error: 'Not found' });
-  if (job.status !== 'ready' || !job.filePath || !job.fileName) return reply.code(409).send({ error: 'Not ready' });
+app.get('/file/:id', async (req, res) => {
+  const id = req.params?.id ?? '';
+  const job = id ? jobs.get(id) : undefined;
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (job.status !== 'ready' || !job.filePath || !job.fileName) return res.status(409).json({ error: 'Not ready' });
   try {
-    logger.debug('file route start', { id, filePath: job.filePath, fileName: job.fileName });
-    const filePath = job.filePath;
-    const fileName = job.fileName;
+    const filePath = job.filePath!;
+    const fileName = job.fileName!;
+    logger.debug('file route start', { id, filePath, fileName });
     const exists = await fs.pathExists(filePath);
     if (!exists) {
       logger.error('file route: file not found on disk', { id, filePath });
-      return reply.code(410).send({ error: 'gone' });
+      return res.status(410).json({ error: 'gone' });
     }
     const st = await fs.stat(filePath);
     const total = st.size;
     logger.debug('file route stat', { id, total });
-    const range = (req.headers as any)['range'] as string | undefined;
+    const range = req.headers['range'] as string | undefined;
     const mime = 'application/octet-stream';
     cancelCleanup(job);
     job.activeStreams = (job.activeStreams || 0) + 1;
@@ -335,9 +341,8 @@ fastify.get('/file/:id', async (req, reply) => {
       scheduleCleanup(job);
     };
 
-    // Standard Fastify streaming (no hijack)
-    reply.raw.setTimeout(10 * 60 * 1000);
-    let stream: any;
+    res.setTimeout(10 * 60 * 1000);
+    let stream: fs.ReadStream;
     if (range) {
       const m = range.match(/bytes=(\d*)-(\d*)/);
       if (m) {
@@ -345,52 +350,61 @@ fastify.get('/file/:id', async (req, reply) => {
         const end = m[2] ? Math.min(parseInt(m[2], 10), total - 1) : total - 1;
         const chunk = end - start + 1;
         logger.debug('file route range', { id, start, end, chunk });
-        reply.code(206);
-        reply.header('Content-Range', `bytes ${start}-${end}/${total}`);
-        reply.header('Content-Length', String(chunk));
-        reply.header('Content-Type', mime);
-        reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.status(206);
+        res.set({
+          'Content-Range': `bytes ${start}-${end}/${total}`,
+          'Content-Length': String(chunk),
+          'Content-Type': mime,
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+        });
         stream = createReadStream(filePath, { start, end });
+      } else {
+        res.status(416);
+        return res.end();
       }
-    }
-    if (!stream) {
-      reply.code(200);
-      reply.header('Content-Length', String(total));
-      reply.header('Content-Type', mime);
-      reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
+    } else {
+      res.status(200);
+      res.set({
+        'Content-Length': String(total),
+        'Content-Type': mime,
+        'Content-Disposition': `attachment; filename="${fileName}"`,
+      });
       stream = createReadStream(filePath);
     }
 
-    stream.on('error', (e: any) => { logger.warn('stream error (client likely aborted)', { id, message: e?.message, code: e?.code }); try { stream.destroy(); } catch {}; onClose(); });
-    stream.on('close', onClose);
-    return reply.send(stream);
-  } catch (e) {
-    const err: any = e;
-    logger.error('file route failed', { id, message: err?.message, code: err?.code, stack: err?.stack });
-    return reply.code(500).send({ error: 'stream failed' });
+    stream.on('error', (e: any) => {
+      logger.warn('stream error (client likely aborted)', { id, message: e?.message, code: e?.code });
+      try {
+        stream.destroy();
+      } catch {}
+      onClose();
+    });
+    res.on('close', onClose);
+    res.on('finish', onClose);
+    stream.pipe(res);
+    return;
+  } catch (error: any) {
+    logger.error('file route failed', { id, message: error?.message, code: error?.code, stack: error?.stack });
+    return res.status(500).json({ error: 'stream failed' });
   }
 });
 
-export async function start() {
+(async () => {
   try {
     const ytdlpVersion = await run('yt-dlp', ['--version']);
     const ffmpegVersion = await run('ffmpeg', ['-version']);
-    logger.info({
-      'yt-dlp': ytdlpVersion.stdout.trim(),
-      'ffmpeg': ffmpegVersion.stdout.split('\n')[0],
-    }, 'Tool versions');
-  } catch (e) {
-    logger.error(e, 'Failed to check tool versions on startup');
+    logger.info(
+      {
+        'yt-dlp': ytdlpVersion.stdout.trim(),
+        ffmpeg: ffmpegVersion.stdout.split('\n')[0],
+      },
+      'Tool versions'
+    );
+  } catch (error) {
+    logger.error(error, 'Failed to check tool versions on startup');
   }
+})();
 
-  await fastify.listen({ port: PORT, host: '0.0.0.0' });
+app.listen(PORT, () => {
   logger.info('Web server started', { port: PORT });
-}
-
-// Start if executed directly
-if (require.main === module) {
-  start().catch((e) => {
-    logger.error('Failed to start web server', { error: e });
-    process.exit(1);
-  });
-}
+});
