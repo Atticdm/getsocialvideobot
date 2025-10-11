@@ -1,5 +1,5 @@
 import type { Telegraf, Context } from 'telegraf';
-import type { InlineQueryResultArticle, Update } from 'telegraf/typings/core/types/typegram';
+import type { InlineQueryResultArticle, InlineQueryResultVideo, Update } from 'telegraf/typings/core/types/typegram';
 import { detectProvider, getProvider } from '../../providers';
 import { logger } from '../../core/logger';
 import { makeSessionDir, safeRemove } from '../../core/fs';
@@ -37,46 +37,64 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
   try {
     const query = ctx.inlineQuery.query?.trim() || '';
     const url = extractUrl(query);
-    let results: InlineQueryResultArticle[];
+    const results: Array<InlineQueryResultArticle | InlineQueryResultVideo> = [];
 
     if (!url) {
-      results = [
-        {
+        results.push({
           type: 'article',
           id: 'help',
           title: 'Введите ссылку на видео',
           description: 'Пример: https://www.instagram.com/reel/...',
-          input_message_content: {
-            message_text: '📎 Отправьте ссылку на поддерживаемое видео.',
-          },
-        },
-      ];
-    } else {
-      const provider = detectProvider(url);
-      if (!provider) {
-        results = [
-          {
-            type: 'article',
-            id: 'unsupported',
-            title: 'Ссылка не поддерживается',
-            description: 'Попробуйте Instagram, Facebook, TikTok и др.',
-            input_message_content: {
-              message_text: '❌ Эта ссылка не поддерживается ботом.',
-            },
-          },
-        ];
-      } else {
-    results = [
-      {
-        type: 'article',
-        id: encodePayload({ url }),
-        title: 'Скачать видео',
-        description: `Источник: ${provider}`,
         input_message_content: {
-          message_text: `⏳ Обрабатываю ссылку…\n${url}`,
+          message_text: '📎 Отправьте ссылку на поддерживаемое видео.',
         },
-      },
-    ];
+      });
+    } else if (!config.PUBLIC_URL) {
+        results.push({
+          type: 'article',
+          id: 'no_public_url',
+          title: 'Бот временно недоступен для inline',
+          description: 'Администратор не настроил PUBLIC_URL.',
+        input_message_content: {
+          message_text: '❌ Inline режим недоступен. Попробуйте позже.',
+        },
+      });
+    } else {
+      const providerName = detectProvider(url);
+      if (!providerName) {
+        results.push({
+          type: 'article',
+          id: 'unsupported',
+          title: 'Ссылка не поддерживается',
+          description: 'Попробуйте Instagram, Facebook, TikTok и др.',
+          input_message_content: {
+            message_text: '❌ Эта ссылка не поддерживается ботом.',
+          },
+        });
+      } else {
+        const payloadId = encodePayload({ url });
+        let thumbUrl: string | undefined;
+        let title = 'Видео';
+        try {
+          const provider = getProvider(providerName);
+          const metadata = await provider.metadata(url);
+          if (metadata?.thumbnail) thumbUrl = metadata.thumbnail;
+          if (metadata?.title) title = metadata.title;
+        } catch (error) {
+          logger.warn({ url, error }, 'Failed to resolve metadata for inline result');
+        }
+        const base = config.PUBLIC_URL.replace(/\/$/, '');
+        const videoUrl = `${base}/iv.mp4?url=${encodeURIComponent(url)}`;
+        results.push({
+          type: 'video',
+          id: payloadId,
+          title,
+          caption: title,
+          mime_type: 'video/mp4',
+          video_url: videoUrl,
+          thumbnail_url: thumbUrl || 'https://via.placeholder.com/320x180.png?text=Video',
+          description: providerName,
+        });
       }
     }
 
@@ -91,22 +109,25 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
 
 async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
   const { result_id: resultId, inline_message_id: inlineMessageId, from } = ctx.chosenInlineResult;
-  if (!inlineMessageId) return;
-
   const payload = decodePayload(resultId);
   if (!payload) {
-    await ctx.telegram.editMessageText(undefined as any, undefined as any, inlineMessageId, '❌ Не удалось обработать ссылку.');
     return;
   }
+  inlinePayloads.delete(resultId);
 
   const { url } = payload;
   const providerName = detectProvider(url);
   if (!providerName) {
-    await ctx.telegram.editMessageText(undefined as any, undefined as any, inlineMessageId, '❌ Ссылка не поддерживается.');
+    logger.warn({ url, userId: from.id }, 'Inline result chosen with unsupported provider');
     return;
   }
 
-  logger.info({ url, providerName, userId: from.id }, 'Inline download started');
+  if (!inlineMessageId) {
+    logger.info({ url, providerName, userId: from.id }, 'Inline result chosen without inline_message_id');
+    return;
+  }
+
+  logger.info({ url, providerName, userId: from.id }, 'Inline result acknowledged with inline_message_id');
 
   const sessionDir = await makeSessionDir();
 

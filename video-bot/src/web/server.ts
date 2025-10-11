@@ -291,21 +291,97 @@ app.get('/download', async (req, res) => {
   return res.type('text/html').send(`<!doctype html><meta http-equiv="refresh" content="0; url=/${q}">`);
 });
 
+app.get('/iv.mp4', async (req, res) => {
+  const sourceUrl = req.query?.['url'] as string | undefined;
+  if (!sourceUrl) {
+    res.status(400).json({ error: 'Missing url' });
+    return;
+  }
+
+  const providerName = detectProvider(sourceUrl);
+  if (!providerName) {
+    res.status(400).json({ error: 'Unsupported provider' });
+    return;
+  }
+
+  await ensureTempDir();
+  const sessionDir = await makeSessionDir();
+  let filePath: string | undefined;
+  try {
+    const provider = getProvider(providerName);
+    const result = await provider.download(sourceUrl, sessionDir);
+    filePath = result.filePath;
+    await ensureBelowLimit(filePath);
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(fileName).toLowerCase();
+    const mime =
+      ext === '.mp4'
+        ? 'video/mp4'
+        : ext === '.webm'
+        ? 'video/webm'
+        : ext === '.mkv'
+        ? 'video/x-matroska'
+        : 'application/octet-stream';
+    const stat = await fs.stat(filePath);
+
+    res.set({
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Type': mime,
+      'Content-Length': String(stat.size),
+      'Content-Disposition': `inline; filename="${fileName}"`,
+    });
+
+    const stream = createReadStream(filePath);
+    stream.on('error', (error) => {
+      logger.warn({ error, sourceUrl }, 'Inline video stream error');
+      res.destroy(error);
+    });
+    res.on('close', () => {
+      stream.destroy();
+    });
+    stream.pipe(res);
+    await new Promise<void>((resolve) => {
+      res.on('finish', resolve);
+      res.on('close', resolve);
+    });
+    return;
+  } catch (error) {
+    logger.error({ error, sourceUrl }, 'Failed to proxy inline video');
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to fetch video' });
+    }
+    return;
+  } finally {
+    if (sessionDir) await safeRemove(sessionDir).catch(() => undefined);
+  }
+});
+
 app.post('/api/start', async (req, res) => {
   try {
     const url = (req.body?.url || '').toString();
-    if (!url) return res.status(400).json({ error: 'Missing url' });
+    if (!url) {
+      res.status(400).json({ error: 'Missing url' });
+      return;
+    }
     const ip = (req.ip || req.socket.remoteAddress || 'unknown').toString();
     const count = activeByIp.get(ip) || 0;
-    if (count >= MAX_PER_IP) return res.status(429).json({ error: 'Too many concurrent downloads from this IP' });
+    if (count >= MAX_PER_IP) {
+      res.status(429).json({ error: 'Too many concurrent downloads from this IP' });
+      return;
+    }
     activeByIp.set(ip, count + 1);
     const job = await startJob(url);
     activeByIp.set(ip, Math.max(0, (activeByIp.get(ip) || 1) - 1));
-    return res.json({ id: job.id });
+    res.json({ id: job.id });
+    return;
   } catch (error) {
     logger.error('api/start failed', { error });
-    return res.status(500).json({ error: 'Failed to start' });
+    res.status(500).json({ error: 'Failed to start' });
+    return;
   }
+  return;
 });
 
 app.get('/status', async (req, res) => {
