@@ -40,21 +40,21 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
     const results: Array<InlineQueryResultArticle | InlineQueryResultVideo> = [];
 
     if (!url) {
-        results.push({
-          type: 'article',
-          id: 'help',
-          title: 'Введите ссылку на видео',
-          description: 'Пример: https://www.instagram.com/reel/...',
+      results.push({
+        type: 'article',
+        id: 'help',
+        title: 'Введите ссылку на видео',
+        description: 'Пример: https://www.instagram.com/reel/...',
         input_message_content: {
           message_text: '📎 Отправьте ссылку на поддерживаемое видео.',
         },
       });
     } else if (!config.PUBLIC_URL) {
-        results.push({
-          type: 'article',
-          id: 'no_public_url',
-          title: 'Бот временно недоступен для inline',
-          description: 'Администратор не настроил PUBLIC_URL.',
+      results.push({
+        type: 'article',
+        id: 'no_public_url',
+        title: 'Бот временно недоступен для inline',
+        description: 'Администратор не настроил PUBLIC_URL.',
         input_message_content: {
           message_text: '❌ Inline режим недоступен. Попробуйте позже.',
         },
@@ -72,29 +72,39 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
           },
         });
       } else {
-        const payloadId = encodePayload({ url });
-        let thumbUrl: string | undefined;
-        let title = 'Видео';
         try {
           const provider = getProvider(providerName);
-          const metadata = await provider.metadata(url);
-          if (metadata?.thumbnail) thumbUrl = metadata.thumbnail;
-          if (metadata?.title) title = metadata.title;
+          const download = await provider.download(url, '/tmp');
+          await ensureBelowLimit(download.filePath);
+
+          let title = download.videoInfo?.title || 'Видео';
+          let thumbUrl: string | undefined;
+          try {
+            const metadata = await provider.metadata(url);
+            if (metadata?.title) title = metadata.title;
+            thumbUrl = metadata?.thumbnail;
+          } catch (metaError) {
+            logger.warn({ url, metaError }, 'Failed to fetch metadata for inline video');
+          }
+
+          const fileName = path.basename(download.filePath);
+          const base = config.PUBLIC_URL.replace(/\/$/, '');
+          const videoUrl = `${base}/tmp/${fileName}`;
+          const payloadId = encodePayload({ url });
+          if (title.length > 128) title = title.slice(0, 125) + '...';
+          results.push({
+            type: 'video',
+            id: payloadId,
+            title,
+            caption: 'via @getsocialvideobot',
+            mime_type: 'video/mp4',
+            video_url: videoUrl,
+            thumbnail_url: thumbUrl || `${base}/assets/default.jpg`,
+            description: providerName,
+          });
         } catch (error) {
-          logger.warn({ url, error }, 'Failed to resolve metadata for inline result');
+          logger.error({ error, url }, 'Inline download failed during query');
         }
-        const base = config.PUBLIC_URL.replace(/\/$/, '');
-        const videoUrl = `${base}/iv.mp4?url=${encodeURIComponent(url)}`;
-        results.push({
-          type: 'video',
-          id: payloadId,
-          title,
-          caption: title,
-          mime_type: 'video/mp4',
-          video_url: videoUrl,
-          thumbnail_url: thumbUrl || 'https://via.placeholder.com/320x180.png?text=Video',
-          description: providerName,
-        });
       }
     }
 
