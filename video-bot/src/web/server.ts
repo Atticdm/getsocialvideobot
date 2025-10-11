@@ -12,6 +12,7 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { createReadStream } from 'fs';
 import { config } from '../core/config';
+import { bot, configureWebhook, startPolling } from '../bot/telegraf';
 
 const app = express();
 app.use(express.json());
@@ -21,6 +22,7 @@ const PORT = Number(process.env['PORT'] || 3000);
 const PUBLIC_URL = config.PUBLIC_URL || process.env['PUBLIC_URL'] || '';
 
 app.use('/tmp', express.static('/tmp', { maxAge: 0 }));
+app.use(bot.webhookCallback('/bot'));
 
 if (PUBLIC_URL) {
   logger.info(`✅ Static /tmp is publicly available at ${PUBLIC_URL}/tmp`);
@@ -391,6 +393,11 @@ app.get('/file/:id', async (req, res) => {
 
 (async () => {
   try {
+    if (PUBLIC_URL) {
+      await configureWebhook(PUBLIC_URL);
+    } else {
+      await startPolling();
+    }
     const ytdlpVersion = await run('yt-dlp', ['--version']);
     const ffmpegVersion = await run('ffmpeg', ['-version']);
     logger.info(
@@ -401,10 +408,10 @@ app.get('/file/:id', async (req, res) => {
       'Tool versions'
     );
   } catch (error) {
-    logger.error(error, 'Failed to check tool versions on startup');
+    logger.error({ error }, 'Failed to initialize bot for web server');
   }
-})();
 
-app.listen(PORT, () => {
-  logger.info('Web server started', { port: PORT });
-});
+  app.listen(PORT, () => {
+    logger.info('Web server started', { port: PORT });
+  });
+})();
