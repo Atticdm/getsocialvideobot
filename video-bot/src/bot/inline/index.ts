@@ -89,7 +89,7 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
 
           const fileName = path.basename(download.filePath);
           const base = config.PUBLIC_URL.replace(/\/$/, '');
-          const videoUrl = `${base}/tmp/${fileName}`;
+          const videoUrl = `${base}/tmp/${encodeURIComponent(fileName)}`;
           const payloadId = encodePayload({ url });
           if (title.length > 128) title = title.slice(0, 125) + '...';
           results.push({
