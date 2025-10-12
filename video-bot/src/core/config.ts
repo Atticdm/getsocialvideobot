@@ -13,6 +13,7 @@ const configSchema = z.object({
   FFMPEG_PATH: z.string().optional().default('ffmpeg'),
   PYTHON_PATH: z.string().optional().default('python3'),
   PUBLIC_URL: z.string().optional().default(''),
+  TEMP_SERVER_URL: z.string().optional().default(''),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   REDIS_URL: z.string().optional().default(''),
   CACHE_PREFIX: z.string().optional().default('yeet:'),

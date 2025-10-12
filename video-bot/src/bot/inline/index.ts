@@ -39,6 +39,9 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
     const url = extractUrl(query);
     const results: Array<InlineQueryResultArticle | InlineQueryResultVideo> = [];
 
+    const rawBaseUrl = config.TEMP_SERVER_URL || config.PUBLIC_URL || '';
+    const baseUrl = rawBaseUrl.replace(/\/$/, '');
+
     if (!url) {
       results.push({
         type: 'article',
@@ -49,7 +52,7 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
           message_text: '📎 Отправьте ссылку на поддерживаемое видео.',
         },
       });
-    } else if (!config.PUBLIC_URL) {
+    } else if (!baseUrl) {
       results.push({
         type: 'article',
         id: 'no_public_url',
@@ -88,8 +91,7 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
           }
 
           const fileName = path.basename(download.filePath);
-          const base = config.PUBLIC_URL.replace(/\/$/, '');
-          const videoUrl = `${base}/tmp/${encodeURIComponent(fileName)}`;
+          const videoUrl = `${baseUrl}/tmp/${encodeURIComponent(fileName)}`;
           const payloadId = encodePayload({ url });
           if (title.length > 128) title = title.slice(0, 125) + '...';
           results.push({
@@ -99,7 +101,7 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
             caption: 'via @getsocialvideobot',
             mime_type: 'video/mp4',
             video_url: videoUrl,
-            thumbnail_url: thumbUrl || `${base}/assets/default.jpg`,
+            thumbnail_url: thumbUrl || 'https://via.placeholder.com/320x180.png?text=Video',
             description: providerName,
           });
         } catch (error) {
@@ -167,8 +169,9 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
       );
       logger.info({ url, providerName, userId: from.id }, 'Inline download finished with cached video');
     } else {
-      const httpUrl = config.PUBLIC_URL
-        ? `${config.PUBLIC_URL}/tmp/${path.basename(download.filePath)}`
+      const base = config.TEMP_SERVER_URL || config.PUBLIC_URL || '';
+      const httpUrl = base
+        ? `${base.replace(/\/$/, '')}/tmp/${path.basename(download.filePath)}`
         : undefined;
 
       if (httpUrl) {
