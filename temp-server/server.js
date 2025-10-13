@@ -5,13 +5,32 @@ import cron from 'node-cron';
 import fs from 'fs-extra';
 import path from 'path';
 import process from 'process';
+import multer from 'multer';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 const TMP_DIR = process.env.TMP_DIR || '/tmp';
+const UPLOAD_SECRET = process.env.UPLOAD_SECRET || 'change-this-secret';
 
 app.use(cors());
 app.use(morgan('combined'));
+
+// Multer configuration for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, TMP_DIR);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+  }
+});
+
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB max
+});
 
 const staticMiddleware = express.static(TMP_DIR, {
   fallthrough: true,
@@ -34,6 +53,32 @@ app.use('/tmp', (req, res, next) => {
 
 app.get('/healthz', (_req, res) => {
   res.json({ status: 'ok', tmpDir: TMP_DIR });
+});
+
+// Upload endpoint for bot to upload files
+app.post('/upload', upload.single('video'), (req, res) => {
+  const authHeader = req.headers.authorization;
+  const expectedAuth = `Bearer ${UPLOAD_SECRET}`;
+  
+  if (authHeader !== expectedAuth) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  
+  const fileName = path.basename(req.file.path);
+  const fileUrl = `/tmp/${encodeURIComponent(fileName)}`;
+  
+  console.log(`File uploaded: ${fileName} (${req.file.size} bytes)`);
+  
+  res.json({
+    success: true,
+    fileName,
+    fileUrl,
+    size: req.file.size
+  });
 });
 
 cron.schedule('*/15 * * * *', async () => {

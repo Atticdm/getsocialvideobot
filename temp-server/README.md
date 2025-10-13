@@ -64,13 +64,34 @@ GET /tmp/<filename>.mp4
 Response: video/mp4 with Accept-Ranges: bytes
 ```
 
+### Загрузка файлов (для бота)
+```
+POST /upload
+Headers:
+  Authorization: Bearer <UPLOAD_SECRET>
+  Content-Type: multipart/form-data
+Body:
+  video: <file>
+
+Response: 
+{
+  "success": true,
+  "fileName": "video-123456789.mp4",
+  "fileUrl": "/tmp/video-123456789.mp4",
+  "size": 1234567
+}
+```
+
 ## Интеграция с основным ботом
 
 В настройках основного бота (Railway) добавьте:
 
 ```env
 TEMP_SERVER_URL=https://your-temp-server.onrender.com
+TEMP_SERVER_SECRET=your-secret-key-here
 ```
+
+⚠️ **ВАЖНО**: Используйте одинаковый секретный ключ на обоих сервисах!
 
 После этого бот будет использовать этот URL для формирования inline-ссылок на видео.
 

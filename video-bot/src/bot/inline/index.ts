@@ -5,6 +5,7 @@ import { logger } from '../../core/logger';
 import { makeSessionDir, safeRemove } from '../../core/fs';
 import { ensureBelowLimit } from '../../core/size';
 import { config } from '../../core/config';
+import { uploadToTempServer, isTempServerConfigured } from '../../core/tempServer';
 import * as path from 'path';
 
 const INLINE_ID_PREFIX = 'dl_';
@@ -76,34 +77,59 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
         });
       } else {
         try {
-          const provider = getProvider(providerName);
-          const download = await provider.download(url, '/tmp');
-          await ensureBelowLimit(download.filePath);
-
-          let title = download.videoInfo?.title || 'Видео';
-          let thumbUrl: string | undefined;
+          // Скачиваем файл во временную директорию
+          const sessionDir = await makeSessionDir();
+          
           try {
-            const metadata = await provider.metadata(url);
-            if (metadata?.title) title = metadata.title;
-            thumbUrl = metadata?.thumbnail;
-          } catch (metaError) {
-            logger.warn({ url, metaError }, 'Failed to fetch metadata for inline video');
-          }
+            const provider = getProvider(providerName);
+            const download = await provider.download(url, sessionDir);
+            await ensureBelowLimit(download.filePath);
 
-          const fileName = path.basename(download.filePath);
-          const videoUrl = `${baseUrl}/tmp/${encodeURIComponent(fileName)}`;
-          const payloadId = encodePayload({ url });
-          if (title.length > 128) title = title.slice(0, 125) + '...';
-          results.push({
-            type: 'video',
-            id: payloadId,
-            title,
-            caption: 'via @getsocialvideobot',
-            mime_type: 'video/mp4',
-            video_url: videoUrl,
-            thumbnail_url: thumbUrl || 'https://via.placeholder.com/320x180.png?text=Video',
-            description: providerName,
-          });
+            let title = download.videoInfo?.title || 'Видео';
+            let thumbUrl: string | undefined;
+            try {
+              const metadata = await provider.metadata(url);
+              if (metadata?.title) title = metadata.title;
+              thumbUrl = metadata?.thumbnail;
+            } catch (metaError) {
+              logger.warn({ url, metaError }, 'Failed to fetch metadata for inline video');
+            }
+
+            // Загружаем файл на temp-server (если настроен)
+            let videoUrl: string;
+            if (isTempServerConfigured()) {
+              try {
+                const uploadResult = await uploadToTempServer(download.filePath);
+                videoUrl = uploadResult.fullUrl;
+                logger.info({ videoUrl, fileName: uploadResult.fileName }, 'File uploaded to temp-server for inline');
+              } catch (uploadError) {
+                logger.error({ uploadError, url }, 'Failed to upload to temp-server, falling back to local URL');
+                // Fallback to local URL if upload fails
+                const fileName = path.basename(download.filePath);
+                videoUrl = `${baseUrl}/tmp/${encodeURIComponent(fileName)}`;
+              }
+            } else {
+              // Используем локальный URL если temp-server не настроен
+              const fileName = path.basename(download.filePath);
+              videoUrl = `${baseUrl}/tmp/${encodeURIComponent(fileName)}`;
+            }
+
+            const payloadId = encodePayload({ url });
+            if (title.length > 128) title = title.slice(0, 125) + '...';
+            results.push({
+              type: 'video',
+              id: payloadId,
+              title,
+              caption: 'via @getsocialvideobot',
+              mime_type: 'video/mp4',
+              video_url: videoUrl,
+              thumbnail_url: thumbUrl || 'https://via.placeholder.com/320x180.png?text=Video',
+              description: providerName,
+            });
+          } finally {
+            // Очищаем временную директорию после загрузки на temp-server
+            await safeRemove(sessionDir);
+          }
         } catch (error) {
           logger.error({ error, url }, 'Inline download failed during query');
         }
@@ -169,10 +195,28 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
       );
       logger.info({ url, providerName, userId: from.id }, 'Inline download finished with cached video');
     } else {
-      const base = config.TEMP_SERVER_URL || config.PUBLIC_URL || '';
-      const httpUrl = base
-        ? `${base.replace(/\/$/, '')}/tmp/${path.basename(download.filePath)}`
-        : undefined;
+      // Пытаемся загрузить на temp-server или использовать публичный URL
+      let httpUrl: string | undefined;
+
+      if (isTempServerConfigured()) {
+        try {
+          const uploadResult = await uploadToTempServer(download.filePath);
+          httpUrl = uploadResult.fullUrl;
+          logger.info({ httpUrl, userId: from.id }, 'File uploaded to temp-server for inline result');
+        } catch (uploadError) {
+          logger.error({ uploadError, userId: from.id }, 'Failed to upload to temp-server in chosen result');
+          // Fallback to local URL
+          const base = config.TEMP_SERVER_URL || config.PUBLIC_URL || '';
+          if (base) {
+            httpUrl = `${base.replace(/\/$/, '')}/tmp/${path.basename(download.filePath)}`;
+          }
+        }
+      } else {
+        const base = config.TEMP_SERVER_URL || config.PUBLIC_URL || '';
+        httpUrl = base
+          ? `${base.replace(/\/$/, '')}/tmp/${path.basename(download.filePath)}`
+          : undefined;
+      }
 
       if (httpUrl) {
         await ctx.telegram.editMessageMedia(
@@ -185,7 +229,7 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
             caption: download.videoInfo?.title || 'Видео',
           }
         );
-        logger.info({ url, providerName, userId: from.id }, 'Inline download finished via public URL');
+        logger.info({ url, providerName, userId: from.id, httpUrl }, 'Inline download finished via URL');
       } else {
         await ctx.telegram.editMessageText(
           undefined as any,
