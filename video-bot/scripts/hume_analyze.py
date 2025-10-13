@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 import wave
@@ -161,10 +162,64 @@ def _start_job(client: HumeClient, audio_path: Path) -> str:
         ),
         transcription=Transcription(identify_speakers=True),
     )
-    return client.expression_measurement.batch.start_inference_job_from_local_file(
-        file=[str(audio_path)],
-        json=request.model_dump(mode="json", exclude_none=True),
-    )
+    file_name = audio_path.name or "audio.wav"
+    mime_type = _guess_mime(audio_path)
+    with audio_path.open("rb") as audio_file:
+        file_tuple = (file_name, audio_file, mime_type)
+        return client.expression_measurement.batch.start_inference_job_from_local_file(
+            file=[file_tuple],
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+
+
+def _guess_mime(audio_path: Path) -> str:
+    suffix = audio_path.suffix.lower()
+    if suffix in {".wav", ".wave"}:
+        return "audio/wav"
+    if suffix == ".mp3":
+        return "audio/mpeg"
+    if suffix in {".m4a", ".aac"}:
+        return "audio/mp4"
+    if suffix == ".ogg":
+        return "audio/ogg"
+    if suffix == ".flac":
+        return "audio/flac"
+    return "application/octet-stream"
+
+
+def _log_ffprobe(audio_path: Path) -> None:
+    try:
+        size_bytes = audio_path.stat().st_size
+        print(f"[hume_analyze] audio file: path={audio_path} size_bytes={size_bytes}", file=sys.stderr)
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        print(f"[hume_analyze] failed to stat audio file: {exc}", file=sys.stderr)
+
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_streams",
+                "-show_format",
+                str(audio_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        if stdout:
+            preview = stdout if len(stdout) <= 2000 else stdout[:2000] + "..."
+            print(f"[hume_analyze] ffprobe stdout:\n{preview}", file=sys.stderr)
+        if stderr:
+            preview_err = stderr if len(stderr) <= 2000 else stderr[:2000] + "..."
+            print(f"[hume_analyze] ffprobe stderr:\n{preview_err}", file=sys.stderr)
+    except FileNotFoundError:
+        print("[hume_analyze] ffprobe not available in PATH", file=sys.stderr)
+    except Exception as exc:  # pragma: no cover
+        print(f"[hume_analyze] ffprobe invocation failed: {exc}", file=sys.stderr)
 
 
 def _wait_for_completion(client: HumeClient, job_id: str, timeout_seconds: float, poll_seconds: float) -> None:
@@ -188,6 +243,8 @@ def _run(audio_path: Path) -> Dict[str, Any]:
         raise AnalysisError("HUME_API_KEY is not set")
 
     client = HumeClient(api_key=api_key)
+
+    _log_ffprobe(audio_path)
 
     job_id = _start_job(client, audio_path)
     timeout_seconds = float(os.getenv("HUME_ANALYZE_TIMEOUT", "180"))
