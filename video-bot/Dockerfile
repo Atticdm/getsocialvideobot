@@ -8,12 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Устанавливаем yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp
 
-# Устанавливаем Python-библиотеки для аудиоанализа
+# Устанавливаем Python-библиотеки (оставляем только лёгкие зависимости для анализатора)
 # Сначала копируем requirements, чтобы использовать слой кеша
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt \
- && pip3 install --no-cache-dir --force-reinstall --break-system-packages numpy==1.26.4
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Копируем и устанавливаем Node.js зависимости
 COPY package*.json ./

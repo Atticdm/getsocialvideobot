@@ -22,11 +22,17 @@ type TimelineSegment = {
   start: number;
   end: number;
   type?: 'speech' | 'silence';
+  text?: string;
+  emotions?: Array<{ name: string; score: number }>;
 };
 
 type AudioAnalysis = {
   speakers: Record<string, { gender: 'male' | 'female' | 'unknown' }>;
   segments: TimelineSegment[];
+  duration?: number;
+  transcript?: string;
+  emotions?: Array<Record<string, unknown>>;
+  raw?: unknown;
   error?: string;
 };
 
@@ -106,38 +112,71 @@ export async function translateInstagramReel(
     const fullAudioPath = paths.session.originalAudio(sessionDir, videoInfo.id);
     await run(config.FFMPEG_PATH, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
 
-    const analysisResult = await run(config.PYTHON_PATH, [paths.scripts.analyzeAudio, fullAudioPath], {
-      timeout: 180000,
+    const analysisResult = await run(config.PYTHON_PATH, [paths.scripts.humeAnalyze, fullAudioPath], {
+      timeout: 240000,
     });
 
     if (analysisResult.stderr) {
-      // eslint-disable-next-line no-console
-      console.warn('PYTHON STDERR:', analysisResult.stderr.slice(0, 4000));
-      logger.warn('Python analyzer stderr', { stderrPreview: analysisResult.stderr.slice(0, 2000) });
+      logger.debug('Hume analyzer stderr', { stderrPreview: analysisResult.stderr.slice(0, 2000) });
     }
 
-    if (analysisResult.code !== 0 || !analysisResult.stdout) {
+    const stdoutClean = (analysisResult.stdout || '').trim();
+    if (analysisResult.code !== 0 || !stdoutClean) {
       logger.error(
         {
           code: analysisResult.code,
           stderr: analysisResult.stderr,
-          stdoutPreview: (analysisResult.stdout || '').slice(0, 400),
+          stdoutPreview: stdoutClean.slice(0, 400),
         },
-        'Audio analysis script failed or produced no output'
+        'Hume audio analysis script failed or produced no output'
       );
       throw new Error(`Audio analysis script failed. Stderr: ${analysisResult.stderr}`);
     }
 
-    const clean = (analysisResult.stdout || '').trim();
-    const jsonStart = clean.indexOf('{');
-    if (jsonStart < 0) {
-      throw new Error(`Could not parse analyzer JSON. Stdout head: ${clean.slice(0, 200)}`);
+    const parsed = JSON.parse(stdoutClean) as AudioAnalysis;
+    if (parsed.error) {
+      throw new Error(`Audio analysis script returned an error: ${parsed.error}`);
     }
-    const jsonStr = clean.slice(jsonStart);
-    analysis = JSON.parse(jsonStr) as AudioAnalysis;
-    if (analysis.error) {
-      throw new Error(`Audio analysis script returned an error: ${analysis.error}`);
+
+    const segments = (parsed.segments || []).map((segment) => ({
+      ...segment,
+      type: segment.type ?? 'speech',
+    }));
+
+    if (!segments.length) {
+      const fallbackSpeaker = Object.keys(parsed.speakers || {})[0] ?? 'speaker_0';
+      segments.push({
+        speaker: fallbackSpeaker,
+        start: 0,
+        end: parsed.duration ?? 0,
+        type: 'speech',
+      });
     }
+
+    const speakers =
+      parsed.speakers && Object.keys(parsed.speakers).length > 0
+        ? parsed.speakers
+        : { [segments[0]?.speaker ?? 'speaker_0']: { gender: 'unknown' as const } };
+
+    analysis = {
+      ...parsed,
+      segments,
+      speakers,
+    };
+
+    logger.info(
+      {
+        humeAnalysis: {
+          duration: analysis.duration,
+          speakers: analysis.speakers,
+          segmentCount: analysis.segments.length,
+          dominantEmotionSample: analysis.emotions?.slice(0, 3),
+          rawPreview: analysis.raw ? JSON.stringify(analysis.raw).slice(0, 800) : undefined,
+        },
+      },
+      'Hume audio analysis completed'
+    );
+
     completeStage(analysisStage);
     await notifyObserver(observer, analysisStage);
   } catch (error) {
@@ -172,8 +211,11 @@ export async function translateInstagramReel(
   const audioParts: string[] = [];
   const synthesisTasks: Array<Promise<void>> = [];
 
-  const speechSegments = analysis.segments.filter((segment) => segment.type === 'speech');
-  const totalSpeechDuration = speechSegments.reduce((sum, segment) => sum + (segment.end - segment.start), 0);
+  const speechSegments = analysis.segments.filter((segment) => (segment.type ?? 'speech') === 'speech');
+  const totalSpeechDuration = speechSegments.reduce(
+    (sum, segment) => sum + Math.max(0, segment.end - segment.start),
+    0
+  );
   let textOffset = 0;
 
   for (let i = 0; i < analysis.segments.length; i++) {
@@ -185,8 +227,10 @@ export async function translateInstagramReel(
     const partPath = path.join(sessionDir, `part_${i}.mp3`);
     audioParts.push(partPath);
 
-    if (segment.type === 'speech') {
-      const segmentDuration = segment.end - segment.start;
+    const isSpeech = (segment.type ?? 'speech') === 'speech';
+
+    if (isSpeech) {
+      const segmentDuration = Math.max(0, segment.end - segment.start);
       const proportion = totalSpeechDuration > 0 ? segmentDuration / totalSpeechDuration : 0;
       const textPartLength = Math.round(proportion * translatedText.length);
       const textPart = translatedText.substring(textOffset, textOffset + textPartLength);
@@ -219,7 +263,7 @@ export async function translateInstagramReel(
         );
       }
     } else {
-      const pauseDuration = segment.end - segment.start;
+      const pauseDuration = Math.max(0, segment.end - segment.start);
       if (pauseDuration > 0.05) {
         synthesisTasks.push(
           run(config.FFMPEG_PATH, [
