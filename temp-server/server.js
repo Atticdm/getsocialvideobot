@@ -44,12 +44,8 @@ const staticMiddleware = express.static(TMP_DIR, {
   }
 });
 
-app.use('/tmp', (req, res, next) => {
-  if (req.method === 'GET') {
-    return staticMiddleware(req, res, next);
-  }
-  return res.status(405).end();
-});
+// Serve static files from /tmp directory
+app.use('/tmp', staticMiddleware);
 
 app.get('/healthz', (_req, res) => {
   res.json({ status: 'ok', tmpDir: TMP_DIR });
