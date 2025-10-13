@@ -115,16 +115,16 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
             }
 
             const payloadId = encodePayload({ url });
-            if (title.length > 128) title = title.slice(0, 125) + '...';
+            const buttonTitle = `📹 Отправить видео в чат`;
             results.push({
               type: 'video',
               id: payloadId,
-              title,
-              caption: 'via @getsocialvideobot',
+              title: buttonTitle,
+              caption: title.length > 100 ? title.slice(0, 97) + '...' : title,
               mime_type: 'video/mp4',
               video_url: videoUrl,
               thumbnail_url: thumbUrl || 'https://via.placeholder.com/320x180.png?text=Video',
-              description: providerName,
+              description: `${providerName} • ${title.length > 50 ? title.slice(0, 47) + '...' : title}`,
             });
           } finally {
             // Очищаем временную директорию после загрузки на temp-server
@@ -190,7 +190,7 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
         {
           type: 'video',
           media: fileId,
-          caption: download.videoInfo?.title || 'Видео',
+          caption: `📹 ${download.videoInfo?.title || 'Видео'}\n\nvia @getsocialvideobot`,
         }
       );
       logger.info({ url, providerName, userId: from.id }, 'Inline download finished with cached video');
@@ -226,7 +226,7 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
           {
             type: 'video',
             media: httpUrl,
-            caption: download.videoInfo?.title || 'Видео',
+            caption: `📹 ${download.videoInfo?.title || 'Видео'}\n\nvia @getsocialvideobot`,
           }
         );
         logger.info({ url, providerName, userId: from.id, httpUrl }, 'Inline download finished via URL');
