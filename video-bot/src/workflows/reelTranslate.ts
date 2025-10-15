@@ -345,6 +345,7 @@ export async function translateInstagramReel(
           const ttsOptions: Parameters<typeof synthesizeSpeech>[2] = {
             voiceId,
             speed: cappedSpeed,
+            gender,
           };
           if (dominantEmotion?.name) {
             const rawScore = dominantEmotion.score;

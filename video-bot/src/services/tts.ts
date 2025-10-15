@@ -9,7 +9,10 @@ const HUME_TTS_URL = 'https://api.hume.ai/v0/tts/file';
 type TtsOptions = {
   voiceId?: string;
   speed?: number;
-  emotion?: { name: string; score: number };
+  gender?: 'male' | 'female' | 'unknown';
+  emotion?: { name: string; score?: number };
+  trailingSilence?: number;
+  descriptionHint?: string;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -37,20 +40,34 @@ export async function synthesizeSpeech(
     utterance['speed'] = Number(clamp(options.speed, 0.5, 2.0).toFixed(2));
   }
 
+  if (typeof options.trailingSilence === 'number' && Number.isFinite(options.trailingSilence)) {
+    utterance['trailing_silence'] = Number(clamp(options.trailingSilence, 0, 5).toFixed(3));
+  }
+
+  const descriptionParts: string[] = [];
+
+  if (options.gender && options.gender !== 'unknown') {
+    descriptionParts.push(`Gender: ${options.gender}`);
+  }
+
   if (options.emotion?.name) {
     const rawScore = options.emotion.score;
     const intensity =
       typeof rawScore === 'number' && Number.isFinite(rawScore)
         ? Number(clamp(rawScore, 0, 1).toFixed(3))
-        : 1.0;
-    utterance['prosody'] = {
-      emotion: [
-        {
-          name: options.emotion.name,
-          intensity,
-        },
-      ],
-    };
+        : undefined;
+    const emotionSegment = intensity !== undefined
+      ? `Emotion: ${options.emotion.name} (${intensity})`
+      : `Emotion: ${options.emotion.name}`;
+    descriptionParts.push(emotionSegment);
+  }
+
+  if (options.descriptionHint && options.descriptionHint.trim().length > 0) {
+    descriptionParts.push(options.descriptionHint.trim());
+  }
+
+  if (descriptionParts.length > 0) {
+    utterance['description'] = descriptionParts.join('; ');
   }
 
   const requestBody = {
