@@ -66,7 +66,15 @@ export async function mixVoiceWithBackground(
   voiceTrackPath: string,
   outputAudioPath: string
 ): Promise<void> {
-  const args = [
+  const runMix = async (args: string[]) => {
+    const result = await run(ffmpegBinary, args, { timeout: 240000 });
+    if (result.code !== 0) {
+      return { ok: false as const, stderr: result.stderr };
+    }
+    return { ok: true as const };
+  };
+
+  const primaryArgs = [
     '-y',
     '-i',
     backgroundMusicPath,
@@ -83,10 +91,36 @@ export async function mixVoiceWithBackground(
     outputAudioPath,
   ];
 
-  const result = await run(ffmpegBinary, args, { timeout: 240000 });
-  if (result.code !== 0) {
-    logger.error('Voice/background mix failed', { stderr: result.stderr });
-    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to mix voice with background music');
+  const primary = await runMix(primaryArgs);
+  if (primary.ok) return;
+
+  logger.warn('Primary voice/background mix failed, retrying with fallback filter', {
+    stderr: primary.stderr,
+  });
+
+  const fallbackArgs = [
+    '-y',
+    '-i',
+    backgroundMusicPath,
+    '-i',
+    voiceTrackPath,
+    '-filter_complex',
+    '[0:a]volume=0.35,aresample=async=1[minbg];[1:a]volume=1.0,aresample=async=1[voice];[minbg][voice]amix=inputs=2:normalize=0:dropout_transition=0[aout]',
+    '-map',
+    '[aout]',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '192k',
+    outputAudioPath,
+  ];
+
+  const fallback = await runMix(fallbackArgs);
+  if (!fallback.ok) {
+    logger.error('Voice/background mix failed', { stderr: fallback.stderr });
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to mix voice with background music', {
+      stderr: fallback.stderr,
+    });
   }
 }
 
