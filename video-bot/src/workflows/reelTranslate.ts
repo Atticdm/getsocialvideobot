@@ -92,6 +92,35 @@ function selectVoiceId(target: WhisperLanguage, gender: 'male' | 'female' | 'unk
   return gender === 'male' ? config.HUME_VOICE_ID_EN_MALE : config.HUME_VOICE_ID_EN_FEMALE;
 }
 
+function normalizeSegmentType(segment?: TimelineSegment): string {
+  return (segment?.type ?? 'speech').toLowerCase();
+}
+
+function isSpeechSegment(segment?: TimelineSegment): boolean {
+  const type = normalizeSegmentType(segment);
+  return type === 'speech' || type === 'voice';
+}
+
+function isPauseSegment(segment?: TimelineSegment): boolean {
+  const type = normalizeSegmentType(segment);
+  return type === 'pause' || type === 'silence';
+}
+
+function segmentDuration(segment: TimelineSegment): number {
+  return Math.max(0, (segment.end ?? 0) - (segment.start ?? 0));
+}
+
+function pickDominantEmotion(segment: TimelineSegment): { name: string; score?: number } | undefined {
+  if (!segment.emotions || segment.emotions.length === 0) return undefined;
+  return segment.emotions.reduce<{ name: string; score?: number }>((best, current) => {
+    const currentScore =
+      typeof current.score === 'number' && Number.isFinite(current.score) ? current.score : Number.NEGATIVE_INFINITY;
+    const bestScore =
+      typeof best.score === 'number' && Number.isFinite(best.score) ? best.score : Number.NEGATIVE_INFINITY;
+    return currentScore > bestScore ? current : best;
+  }, segment.emotions[0]!);
+}
+
 export async function translateInstagramReel(
   url: string,
   sessionDir: string,
@@ -211,79 +240,147 @@ export async function translateInstagramReel(
   const audioParts: string[] = [];
   const synthesisTasks: Array<Promise<void>> = [];
 
-  const speechSegments = analysis.segments.filter((segment) => (segment.type ?? 'speech') === 'speech');
-  const totalSpeechDuration = speechSegments.reduce(
-    (sum, segment) => sum + Math.max(0, segment.end - segment.start),
-    0
-  );
+  const speechSegments = analysis.segments.filter((segment) => isSpeechSegment(segment));
+  const totalSpeechDuration = speechSegments.reduce((sum, segment) => sum + segmentDuration(segment), 0);
+  const totalChars = translatedText.length;
+  let remainingChars = totalChars;
   let textOffset = 0;
+  let remainingSpeechSegments = speechSegments.length;
+
+  const queueSilence = (duration: number, outputPath: string): Promise<void> => {
+    const effectiveDuration = duration > 0.01 ? duration : 0.01;
+    return run(config.FFMPEG_PATH, [
+      '-f',
+      'lavfi',
+      '-i',
+      'anullsrc=r=44100',
+      '-t',
+      String(effectiveDuration),
+      '-q:a',
+      '9',
+      outputPath,
+    ]).then(() => undefined);
+  };
 
   for (let i = 0; i < analysis.segments.length; i++) {
     const segment = analysis.segments[i];
-    if (!segment) {
-      logger.warn({ index: i }, 'Timeline segment missing');
-      continue;
-    }
     const partPath = path.join(sessionDir, `part_${i}.mp3`);
     audioParts.push(partPath);
 
-    const isSpeech = (segment.type ?? 'speech') === 'speech';
-
-    if (isSpeech) {
-      const segmentDuration = Math.max(0, segment.end - segment.start);
-      const proportion = totalSpeechDuration > 0 ? segmentDuration / totalSpeechDuration : 0;
-      const textPartLength = Math.round(proportion * translatedText.length);
-      const textPart = translatedText.substring(textOffset, textOffset + textPartLength);
-      textOffset += textPartLength;
-
-      if (textPart.trim().length > 0) {
-        synthesisTasks.push(
-          (async () => {
-            const estimatedDuration = textPart.length / 15;
-            const speed = segmentDuration > 0.1 ? estimatedDuration / segmentDuration : 1.0;
-            const cappedSpeed = Math.max(0.7, Math.min(speed, 1.8));
-            const gender = analysis.speakers[segment.speaker]?.gender || 'unknown';
-            const voiceId = selectVoiceId(target, gender);
-            await synthesizeSpeech(textPart, partPath, { voiceId, speed: cappedSpeed });
-          })()
-        );
-      } else {
-        synthesisTasks.push(
-          run(config.FFMPEG_PATH, [
-            '-f',
-            'lavfi',
-            '-i',
-            'anullsrc=r=44100',
-            '-t',
-            String(segmentDuration),
-            '-q:a',
-            '9',
-            partPath,
-          ]).then(() => undefined)
-        );
-      }
-    } else {
-      const pauseDuration = Math.max(0, segment.end - segment.start);
-      if (pauseDuration > 0.05) {
-        synthesisTasks.push(
-          run(config.FFMPEG_PATH, [
-            '-f',
-            'lavfi',
-            '-i',
-            'anullsrc=r=44100',
-            '-t',
-            String(pauseDuration),
-            '-q:a',
-            '9',
-            partPath,
-          ]).then(() => undefined)
-        );
-      }
+    if (!segment) {
+      logger.warn({ index: i }, 'Timeline segment missing, filling with silence');
+      synthesisTasks.push(queueSilence(0.1, partPath));
+      continue;
     }
+
+    if (isSpeechSegment(segment)) {
+      const durationSeconds = segmentDuration(segment);
+      let charCount = 0;
+
+      if (remainingSpeechSegments <= 1) {
+        charCount = remainingChars;
+      } else if (totalSpeechDuration > 0 && durationSeconds > 0 && totalChars > 0) {
+        charCount = Math.round((durationSeconds / totalSpeechDuration) * totalChars);
+      } else if (remainingSpeechSegments > 0) {
+        charCount = Math.floor(remainingChars / remainingSpeechSegments);
+      }
+
+      const minCharsToLeave = Math.max(0, remainingSpeechSegments - 1);
+      const maxForThisSegment = Math.max(0, remainingChars - minCharsToLeave);
+      if (charCount > maxForThisSegment) {
+        charCount = maxForThisSegment;
+      }
+      if (charCount < 0) {
+        charCount = 0;
+      }
+      if (charCount === 0 && remainingChars > minCharsToLeave && maxForThisSegment > 0) {
+        charCount = Math.min(1, maxForThisSegment);
+      }
+
+      const nextOffset = textOffset + charCount;
+      const rawTextPart = translatedText.slice(textOffset, nextOffset);
+      textOffset = nextOffset;
+      remainingChars -= charCount;
+      remainingSpeechSegments = Math.max(0, remainingSpeechSegments - 1);
+
+      const textForSegment = rawTextPart.trim();
+      if (textForSegment.length === 0) {
+        logger.debug(
+          { index: i, durationSeconds, charCount, reason: 'empty_text' },
+          'Speech segment resolved to silence'
+        );
+        synthesisTasks.push(queueSilence(durationSeconds, partPath));
+        continue;
+      }
+
+      const estimatedDuration = textForSegment.length / 15;
+      const speedRatio = durationSeconds > 0.05 ? estimatedDuration / durationSeconds : 1.0;
+      const cappedSpeed = Math.max(0.7, Math.min(speedRatio, 1.8));
+      const gender = analysis.speakers[segment.speaker]?.gender || 'unknown';
+      const dominantEmotion = pickDominantEmotion(segment);
+      const voiceId = selectVoiceId(target, gender);
+      const languageOption = target === 'ru' ? 'ru' : 'en';
+      const emotionOption = dominantEmotion
+        ? dominantEmotion.score !== undefined
+          ? { name: dominantEmotion.name, score: dominantEmotion.score }
+          : { name: dominantEmotion.name }
+        : undefined;
+
+      logger.debug(
+        {
+          index: i,
+          speaker: segment.speaker,
+          durationSeconds,
+          charCount,
+          textPreview: textForSegment.slice(0, 80),
+          speed: cappedSpeed,
+          gender,
+          emotion: dominantEmotion?.name,
+          emotionScore: dominantEmotion?.score,
+        },
+        'Queueing speech synthesis segment'
+      );
+
+      synthesisTasks.push(
+        (async () => {
+          const ttsOptions: Parameters<typeof synthesizeSpeech>[2] = {
+            voiceId,
+            speed: cappedSpeed,
+            language: languageOption,
+            gender,
+          };
+          if (emotionOption) {
+            ttsOptions.emotion = emotionOption;
+          }
+          await synthesizeSpeech(textForSegment, partPath, ttsOptions);
+        })()
+      );
+      continue;
+    }
+
+    const pauseDuration = segmentDuration(segment);
+    const reason = isPauseSegment(segment) ? 'pause' : 'non_speech';
+    logger.debug({ index: i, duration: pauseDuration, reason }, 'Queueing silence segment');
+    synthesisTasks.push(queueSilence(pauseDuration, partPath));
+  }
+
+  if (remainingChars > 0) {
+    logger.warn(
+      {
+        remainingChars,
+        totalChars,
+        remainingSpeechSegments,
+      },
+      'Not all translated text was allocated to segments'
+    );
   }
 
   await Promise.all(synthesisTasks);
   const finalAudioPath = path.join(sessionDir, 'final_audio.mp3');
+  const missingParts = audioParts.filter((partPath) => !fs.existsSync(partPath));
+  if (missingParts.length > 0) {
+    logger.warn({ missingPartsCount: missingParts.length }, 'Some synthesized parts are missing on disk');
+  }
   const existingParts = audioParts.filter((partPath) => fs.existsSync(partPath));
   await concatenateAudioParts(existingParts, finalAudioPath);
   completeStage(synthStage);

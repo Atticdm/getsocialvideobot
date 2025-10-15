@@ -12,6 +12,8 @@ type TtsOptions = {
   language?: 'en' | 'ru';
   description?: string;
   trailingSilence?: number;
+  gender?: 'male' | 'female' | 'unknown';
+  emotion?: { name: string; score?: number } | string;
 };
 
 export async function synthesizeSpeech(
@@ -31,6 +33,8 @@ export async function synthesizeSpeech(
     text,
   };
 
+  const descriptionParts: string[] = [];
+
   if (options.voiceId) {
     utterance['voice'] = { id: options.voiceId };
   }
@@ -44,8 +48,25 @@ export async function synthesizeSpeech(
     utterance['trailing_silence'] = Number(options.trailingSilence.toFixed(3));
   }
 
+  if (options.gender) {
+    descriptionParts.push(`gender=${options.gender}`);
+  }
+
+  if (options.emotion) {
+    if (typeof options.emotion === 'string') {
+      descriptionParts.push(`emotion=${options.emotion}`);
+    } else if (options.emotion.name) {
+      const scorePart = typeof options.emotion.score === 'number' ? `:${options.emotion.score.toFixed(3)}` : '';
+      descriptionParts.push(`emotion=${options.emotion.name}${scorePart}`);
+    }
+  }
+
   if (options.description && options.description.trim().length > 0) {
-    utterance['description'] = options.description.trim();
+    descriptionParts.push(options.description.trim());
+  }
+
+  if (descriptionParts.length > 0) {
+    utterance['description'] = descriptionParts.join('; ');
   }
 
   const requestBody: Record<string, unknown> = {
