@@ -43,6 +43,7 @@ const configSchema = z.object({
   HUME_VOICE_ID_EN_MALE: z.string().optional().default('cb1a4fae-dad5-4729-bd73-a43f570b9117'),
   HUME_VOICE_ID_EN_FEMALE: z.string().optional().default('5bbc32c1-a1f6-44e8-bedb-9870f23619e2'),
   HUME_AUDIO_FORMAT: z.string().optional().default('wav'),
+  ELEVENLABS_API_KEY: z.string().optional().default(''),
 });
 
 export type Config = z.infer<typeof configSchema>;
