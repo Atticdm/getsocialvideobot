@@ -1,95 +1,156 @@
-import sys
+#!/usr/bin/env python3
+"""
+Analyze audio with Hume Batch API and return speaker segments including gender.
+"""
+
+from __future__ import annotations
+
 import json
 import os
+import sys
+import time
 import traceback
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from huggingface_hub import login
+import requests
+
+HUME_BATCH_URL = "https://api.hume.ai/v0/batch/jobs"
+POLL_INTERVAL_SECONDS = 5
+POLL_TIMEOUT_SECONDS = 15 * 60  # 15 minutes being generous for long clips
 
 
-def analyze_audio(file_path: str) -> dict:
-    debug_info: dict[str, object] = {}
+def _env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
 
-    try:
-        import numpy as np  # type: ignore
-        import librosa  # type: ignore
-        from pydub import AudioSegment  # type: ignore
-        from pyannote.audio import Pipeline  # type: ignore
-        from pyannote.audio import Model  # type: ignore
-        import torch  # type: ignore
-        debug_info["numpyVersion"] = np.__version__
-    except Exception as import_error:
-        return {
-            "speakers": {},
-            "segments": [],
-            "error": f"Failed to import required modules: {import_error}",
-            "traceback": traceback.format_exc(),
-            "stage": "imports",
-            "debug": debug_info,
+
+def _submit_job(audio_path: Path, api_key: str) -> str:
+    with audio_path.open("rb") as audio_file:
+        files = {"file": (audio_path.name, audio_file, "audio/wav")}
+        payload = {
+            "models": {
+                "prosody": {
+                    "identify_speakers": True,
+                },
+            },
         }
 
-    hf_token = os.environ.get("HF_TOKEN")
+        response = requests.post(
+            HUME_BATCH_URL,
+            headers={"X-Hume-Api-Key": api_key},
+            data={"json": json.dumps(payload)},
+            files=files,
+            timeout=60,
+        )
+    response.raise_for_status()
+    job = response.json()
+    job_id = job.get("job_id")
+    if not job_id:
+        raise RuntimeError(f"Hume response missing job_id: {job}")
+    return job_id
 
-    try:
-        if not hf_token:
-            raise ValueError("Hugging Face token not found. Please set the HF_TOKEN environment variable.")
 
-        login(hf_token)
+def _poll_job(job_id: str, api_key: str) -> Dict[str, Any]:
+    deadline = time.time() + POLL_TIMEOUT_SECONDS
+    status_url = f"{HUME_BATCH_URL}/{job_id}"
 
-        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization")
-        debug_info["pipeline"] = "pyannote/speaker-diarization"
+    while time.time() < deadline:
+        response = requests.get(status_url, headers={"X-Hume-Api-Key": api_key}, timeout=30)
+        response.raise_for_status()
+        job = response.json()
+        status = job.get("state", {}).get("status")
+        if status == "COMPLETED":
+            return job
+        if status in {"FAILED", "CANCELED"}:
+            raise RuntimeError(f"Hume job {job_id} failed: {job}")
+        time.sleep(POLL_INTERVAL_SECONDS)
 
-        # Ensure embedding model is available (pyannote>=3.2)
-        Model.from_pretrained("pyannote/embedding", strict=False)
-        pipeline.to(torch.device("cpu"))
+    raise TimeoutError(f"Hume job {job_id} polling timed out after {POLL_TIMEOUT_SECONDS} seconds")
 
-        diarization = pipeline(file_path)
 
-        audio = AudioSegment.from_wav(file_path)
-        speakers: dict[str, dict[str, str]] = {}
-        segments_list = []
+def _extract_results(job: Dict[str, Any]) -> Dict[str, Any]:
+    # Batch job results are nested under "state" -> "results" -> list of results.
+    results = job.get("state", {}).get("results") or []
+    if not results:
+        raise RuntimeError(f"Hume job missing results: {job}")
 
-        for segment, _, speaker_id in diarization.itertracks(yield_label=True):
+    speakers: Dict[str, Dict[str, str]] = {}
+    segments: List[Dict[str, Any]] = []
+
+    for result in results:
+        prosody_predictions = (
+            result.get("models", {})
+            .get("prosody", {})
+            .get("grouped_predictions", [])
+        )
+        for prediction in prosody_predictions:
+            speaker_id = prediction.get("speaker")
+            if not speaker_id:
+                speaker_id = prediction.get("track", {}).get("id") or "unknown"
+
+            # Gender is stored under prediction["speaker_info"]["gender"] when identify_speakers=True
+            gender = (
+                prediction.get("speaker_info", {}).get("gender")
+                or prediction.get("speaker_info", {}).get("sex")
+                or "unknown"
+            )
+
             if speaker_id not in speakers:
-                speaker_segment = audio[segment.start * 1000: segment.end * 1000]
+                speakers[speaker_id] = {"gender": gender or "unknown"}
 
-                if len(speaker_segment) < 100:
+            for chunk in prediction.get("predictions", []):
+                start = chunk.get("time", {}).get("start")
+                end = chunk.get("time", {}).get("end")
+                if start is None or end is None:
                     continue
+                segments.append(
+                    {
+                        "speaker": speaker_id,
+                        "start": round(float(start), 3),
+                        "end": round(float(end), 3),
+                        "type": "speech",
+                        "emotions": chunk.get("emotions"),
+                    }
+                )
 
-                samples = np.array(speaker_segment.get_array_of_samples()).astype(np.float32)
+    segments.sort(key=lambda s: s["start"])
 
-                f0, _, _ = librosa.pyin(y=samples, fmin=60, fmax=400, sr=speaker_segment.frame_rate)
-                mean_f0 = np.nanmean(f0)
+    return {
+        "speakers": speakers,
+        "segments": segments,
+    }
 
-                gender = "unknown"
-                if mean_f0 and not np.isnan(mean_f0):
-                    gender = "male" if mean_f0 < 165 else "female"
 
-                speakers[speaker_id] = {"gender": gender}
+def analyze_audio(file_path: str) -> Dict[str, Any]:
+    debug: Dict[str, Any] = {}
+    try:
+        api_key = _env("HUME_API_KEY")
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Audio file does not exist: {file_path}")
 
-            segments_list.append({
-                "speaker": speaker_id,
-                "start": round(segment.start, 3),
-                "end": round(segment.end, 3),
-            })
-
-        debug_info.update({
-            "speakersCount": len(speakers),
-            "segmentsCount": len(segments_list),
-        })
-        return {"speakers": speakers, "segments": segments_list, "debug": debug_info}
-
-    except Exception as e:
+        job_id = _submit_job(path, api_key)
+        debug["jobId"] = job_id
+        job = _poll_job(job_id, api_key)
+        result = _extract_results(job)
+        result["debug"] = debug
+        return result
+    except Exception as exc:
         return {
             "speakers": {},
             "segments": [],
-            "error": str(e),
+            "error": str(exc),
             "traceback": traceback.format_exc(),
-            "stage": "pipeline",
-            "debug": debug_info,
+            "debug": debug,
         }
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        analysis_result = analyze_audio(sys.argv[1])
-        print(json.dumps(analysis_result))
+    if len(sys.argv) < 2:
+        print("Usage: analyze_audio.py <audio_path>", file=sys.stderr)
+        sys.exit(1)
+    analysis = analyze_audio(sys.argv[1])
+    print(json.dumps(analysis))
