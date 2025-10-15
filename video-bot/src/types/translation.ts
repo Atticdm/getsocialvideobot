@@ -1,4 +1,5 @@
 export type TranslationDirection = 'auto' | 'en-ru' | 'ru-en';
+export type TranslationEngine = 'hume' | 'elevenlabs';
 
 export interface TranslationRequest {
   url: string;
@@ -7,7 +8,14 @@ export interface TranslationRequest {
 }
 
 export interface TranslationStage {
-  name: 'download' | 'analyze-audio' | 'transcribe' | 'translate' | 'synthesize' | 'mux';
+  name:
+    | 'download'
+    | 'analyze-audio'
+    | 'transcribe'
+    | 'translate'
+    | 'synthesize'
+    | 'elevenlabs-dub'
+    | 'mux';
   startedAt: number;
   completedAt?: number;
   error?: string;

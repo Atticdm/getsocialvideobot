@@ -17,10 +17,13 @@ import { synthesizeSpeech } from '../services/tts';
 import { paths } from '../core/paths';
 import {
   TranslationDirection,
+  TranslationEngine,
   TranslationResult,
   TranslationStage,
   WhisperLanguage,
 } from '../types/translation';
+import type { VideoInfo } from '../providers/types';
+import { dubVideoWithElevenLabs } from '../services/elevenlabs';
 
 type TimelineSegment = {
   speaker: string;
@@ -43,6 +46,7 @@ type AudioAnalysis = {
 
 export interface ReelTranslationOptions {
   direction: TranslationDirection;
+  engine: TranslationEngine;
 }
 
 function beginStage(name: TranslationStage['name'], stages: TranslationStage[]): TranslationStage {
@@ -126,20 +130,72 @@ function pickDominantEmotion(segment: TimelineSegment): { name: string; score?: 
   }, segment.emotions[0]!);
 }
 
-export async function translateInstagramReel(
-  url: string,
+interface PipelineResult {
+  audioPath: string;
+  translatedText: string;
+  transcriptPath: string;
+}
+
+function targetLanguageFromDirection(direction: TranslationDirection): string {
+  switch (direction) {
+    case 'ru-en':
+      return 'en';
+    case 'en-ru':
+    case 'auto':
+    default:
+      return 'ru';
+  }
+}
+
+async function runElevenLabsPipeline(
+  downloadPath: string,
   sessionDir: string,
+  videoInfo: VideoInfo,
   options: ReelTranslationOptions,
+  stages: TranslationStage[],
   observer?: (stage: TranslationStage) => void
-): Promise<TranslationResult> {
-  const stages: TranslationStage[] = [];
-  const instagram = getProvider('instagram');
+): Promise<PipelineResult> {
+  const dubStage = beginStage('elevenlabs-dub', stages);
+  try {
+    const extractedAudioPath = path.join(sessionDir, `${videoInfo.id}.original.wav`);
+    await run(config.FFMPEG_PATH, ['-y', '-i', downloadPath, '-vn', '-acodec', 'pcm_s16le', '-ar', '44100', extractedAudioPath]);
 
-  const downloadStage = beginStage('download', stages);
-  const { filePath: downloadPath, videoInfo } = await instagram.download(url, sessionDir);
-  completeStage(downloadStage);
-  await notifyObserver(observer, downloadStage);
+    const targetLang = targetLanguageFromDirection(options.direction);
+    const dubbedPath = await dubVideoWithElevenLabs(extractedAudioPath, targetLang, 'auto');
 
+    const sessionAudioPath = path.join(sessionDir, `${videoInfo.id}.elevenlabs.mp3`);
+    await fs.ensureDir(path.dirname(sessionAudioPath));
+    await fs.copy(dubbedPath, sessionAudioPath);
+    try {
+      await fs.remove(dubbedPath);
+    } catch (copyError) {
+      logger.warn({ copyError }, 'Failed to remove ElevenLabs temporary file');
+    }
+
+    completeStage(dubStage);
+    await notifyObserver(observer, dubStage);
+
+    return {
+      audioPath: sessionAudioPath,
+      translatedText: '',
+      transcriptPath: '',
+    };
+  } catch (error) {
+    failStage(dubStage, error);
+    await notifyObserver(observer, dubStage);
+    const cause = error instanceof AppError ? error : new AppError(ERROR_CODES.ERR_INTERNAL, 'ElevenLabs dubbing failed', { cause: error });
+    throw cause;
+  }
+}
+
+async function runHumePipeline(
+  downloadPath: string,
+  sessionDir: string,
+  videoInfo: VideoInfo,
+  options: ReelTranslationOptions,
+  stages: TranslationStage[],
+  observer?: (stage: TranslationStage) => void
+): Promise<PipelineResult> {
   const analysisStage = beginStage('analyze-audio', stages);
   let analysis: AudioAnalysis;
   try {
@@ -393,17 +449,45 @@ export async function translateInstagramReel(
   completeStage(synthStage);
   await notifyObserver(observer, synthStage);
 
+  return {
+    audioPath: finalAudioPath,
+    translatedText,
+    transcriptPath: '',
+  };
+}
+
+export async function translateInstagramReel(
+  url: string,
+  sessionDir: string,
+  options: ReelTranslationOptions,
+  observer?: (stage: TranslationStage) => void
+): Promise<TranslationResult> {
+  const stages: TranslationStage[] = [];
+  const instagram = getProvider('instagram');
+
+  const downloadStage = beginStage('download', stages);
+  const { filePath: downloadPath, videoInfo } = await instagram.download(url, sessionDir);
+  completeStage(downloadStage);
+  await notifyObserver(observer, downloadStage);
+
+  let pipelineResult: PipelineResult;
+  if (options.engine === 'elevenlabs') {
+    pipelineResult = await runElevenLabsPipeline(downloadPath, sessionDir, videoInfo, options, stages, observer);
+  } else {
+    pipelineResult = await runHumePipeline(downloadPath, sessionDir, videoInfo, options, stages, observer);
+  }
+
   const muxStage = beginStage('mux', stages);
   const outputVideoPath = paths.session.finalVideo(sessionDir, videoInfo.id);
-  await muxFinalVideo(downloadPath, finalAudioPath, outputVideoPath);
+  await muxFinalVideo(downloadPath, pipelineResult.audioPath, outputVideoPath);
   completeStage(muxStage);
   await notifyObserver(observer, muxStage);
 
   return {
     videoPath: outputVideoPath,
-    translatedText,
-    audioPath: finalAudioPath,
+    translatedText: pipelineResult.translatedText,
+    audioPath: pipelineResult.audioPath,
     stages,
-    transcriptPath: '',
+    transcriptPath: pipelineResult.transcriptPath,
   };
 }

@@ -4,7 +4,7 @@ import { rateLimiter } from '../../core/rateLimit';
 import { makeSessionDir, safeRemove } from '../../core/fs';
 import { ensureBelowLimit } from '../../core/size';
 import { translateInstagramReel } from '../../workflows/reelTranslate';
-import { TranslationDirection, TranslationStage } from '../../types/translation';
+import { TranslationDirection, TranslationEngine, TranslationStage } from '../../types/translation';
 import { AppError, toUserMessage } from '../../core/errors';
 import { logger } from '../../core/logger';
 import * as path from 'path';
@@ -15,6 +15,7 @@ const stageLabels: Record<TranslationStage['name'], string> = {
   transcribe: 'Распознаю речь (Whisper)',
   translate: 'Перевожу текст (ChatGPT)',
   synthesize: 'Озвучиваю перевод (Hume)',
+  'elevenlabs-dub': 'Озвучиваю через ElevenLabs',
   mux: 'Собираю видео с новой озвучкой',
 };
 
@@ -25,6 +26,14 @@ function parseDirection(token?: string): TranslationDirection {
   if (normalized === 'ru-en' || normalized === 'ruen' || normalized === 'ru_en') return 'ru-en';
   if (normalized === 'auto') return 'auto';
   return 'auto';
+}
+
+function parseEngine(token?: string): TranslationEngine {
+  if (!token) return 'hume';
+  const normalized = token.trim().toLowerCase();
+  if (normalized.startsWith('eleven')) return 'elevenlabs';
+  if (normalized.startsWith('quality') || normalized.includes('elevenlabs')) return 'elevenlabs';
+  return 'hume';
 }
 
 export async function translateCommand(ctx: Context): Promise<void> {
@@ -45,13 +54,14 @@ export async function translateCommand(ctx: Context): Promise<void> {
   const args = messageText.split(' ').slice(1).filter(Boolean);
   const url = args[0];
   const direction = parseDirection(args[1]);
+  const engine = parseEngine(args[2]);
 
   if (!url) {
-    await ctx.reply('Использование: /translate <ссылка на рилс> [en-ru|ru-en|auto]');
+    await ctx.reply('Использование: /translate <ссылка на рилс> [en-ru|ru-en|auto] [hume|elevenlabs]');
     return;
   }
 
-  logger.info('Translate command received', { userId, username, url, direction });
+  logger.info('Translate command received', { userId, username, url, direction, engine });
 
   const status = rateLimiter.getStatus(userId);
   if (status.active >= 2) {
@@ -93,7 +103,7 @@ export async function translateCommand(ctx: Context): Promise<void> {
       const result = await translateInstagramReel(
         url,
         sessionDir,
-        { direction },
+        { direction, engine },
         stageObserver
       );
 

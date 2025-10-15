@@ -10,17 +10,20 @@ import { statusCommand } from './commands/status';
 import { downloadCommand } from './commands/download';
 import { diagCommand } from './commands/diag';
 import { translateCommand } from './commands/translate';
-import { TranslationDirection } from '../types/translation';
-import { mainKeyboard, translationKeyboard } from '../ui/keyboard';
+import { TranslationDirection, TranslationEngine } from '../types/translation';
+import { engineChoiceKeyboard, mainKeyboard, translationKeyboard, removeKeyboard } from '../ui/keyboard';
 import { setupInlineHandlers } from './inline';
 
-type TranslationState = TranslationDirection | 'pending';
+type TranslationIntent =
+  | { stage: 'direction' }
+  | { stage: 'engine'; direction: TranslationDirection }
+  | { stage: 'ready'; direction: TranslationDirection; engine: TranslationEngine };
 
 export const bot = new Telegraf(config.BOT_TOKEN!);
 
 let handlersRegistered = false;
 let signalsRegistered = false;
-const translationIntents = new Map<number, TranslationState>();
+const translationIntents = new Map<number, TranslationIntent>();
 
 async function logToolVersions(): Promise<void> {
   try {
@@ -87,7 +90,7 @@ export async function setupBot(): Promise<void> {
     return true;
   };
 
-  const registerTranslationIntent = async (ctx: Context, direction: TranslationDirection) => {
+  const registerTranslationDirection = async (ctx: Context, direction: TranslationDirection) => {
     const userId = ctx.from?.id;
     if (!userId) {
       await ctx.reply('Не удалось определить пользователя. Попробуйте ещё раз.');
@@ -97,10 +100,10 @@ export async function setupBot(): Promise<void> {
     const enabled = await ensureTranslationEnabled(ctx);
     if (!enabled) return;
 
-    translationIntents.set(userId, direction);
+    translationIntents.set(userId, { stage: 'engine', direction });
     const directionLabel = direction === 'en-ru' ? 'английского на русский' : 'русского на английский';
-    await ctx.reply(`Отлично! Пришлите ссылку на Instagram Reel для перевода с ${directionLabel}.`, {
-      reply_markup: translationKeyboard.reply_markup,
+    await ctx.reply(`Отличный выбор! Теперь укажите тип перевода для ${directionLabel}.`, {
+      reply_markup: engineChoiceKeyboard.reply_markup,
     });
   };
 
@@ -113,14 +116,39 @@ export async function setupBot(): Promise<void> {
     const enabled = await ensureTranslationEnabled(ctx);
     if (!enabled) return;
 
-    translationIntents.set(userId, 'pending');
+    translationIntents.set(userId, { stage: 'direction' });
     await ctx.reply('Выберите направление перевода:', {
       reply_markup: translationKeyboard.reply_markup,
     });
   });
 
-  bot.hears('🇬🇧 → 🇷🇺', (ctx) => registerTranslationIntent(ctx, 'en-ru'));
-  bot.hears('🇷🇺 → 🇬🇧', (ctx) => registerTranslationIntent(ctx, 'ru-en'));
+  bot.hears('🇬🇧 → 🇷🇺', (ctx) => registerTranslationDirection(ctx, 'en-ru'));
+  bot.hears('🇷🇺 → 🇬🇧', (ctx) => registerTranslationDirection(ctx, 'ru-en'));
+
+  const registerEngine = async (ctx: Context, engine: TranslationEngine) => {
+    const userId = ctx.from?.id;
+    if (!userId) {
+      await ctx.reply('Не удалось определить пользователя. Попробуйте ещё раз.');
+      return;
+    }
+
+    const intent = translationIntents.get(userId);
+    if (!intent || (intent.stage !== 'engine' && intent.stage !== 'ready')) {
+      await ctx.reply('Сначала выберите направление перевода.', {
+        reply_markup: translationKeyboard.reply_markup,
+      });
+      return;
+    }
+
+    const direction = intent.stage === 'engine' ? intent.direction : intent.direction;
+    translationIntents.set(userId, { stage: 'ready', direction, engine });
+    await ctx.reply('Отлично! Пришлите ссылку на Instagram Reel для перевода.', {
+      reply_markup: removeKeyboard.reply_markup,
+    });
+  };
+
+  bot.hears('🚀 Быстрый (Hume)', (ctx) => registerEngine(ctx, 'hume'));
+  bot.hears('💎 Качественный (ElevenLabs)', (ctx) => registerEngine(ctx, 'elevenlabs'));
   bot.hears('⬅️ Back', async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) {
@@ -139,16 +167,24 @@ export async function setupBot(): Promise<void> {
 
     if (text && text.startsWith('http')) {
       if (userId && translationIntents.has(userId)) {
-        const intent = translationIntents.get(userId);
-        if (intent && intent !== 'pending') {
+        const intent = translationIntents.get(userId)!;
+        if (intent.stage === 'ready') {
           translationIntents.delete(userId);
-          ctx.message.text = `/translate ${text} ${intent}`;
+          ctx.message.text = `/translate ${text} ${intent.direction} ${intent.engine}`;
           return translateCommand(ctx);
         }
-        await ctx.reply('Сначала выберите направление перевода.', {
-          reply_markup: translationKeyboard.reply_markup,
-        });
-        return;
+        if (intent.stage === 'direction') {
+          await ctx.reply('Сначала выберите направление перевода.', {
+            reply_markup: translationKeyboard.reply_markup,
+          });
+          return;
+        }
+        if (intent.stage === 'engine') {
+          await ctx.reply('Выберите тип перевода:', {
+            reply_markup: engineChoiceKeyboard.reply_markup,
+          });
+          return;
+        }
       }
 
       ctx.message.text = `/download ${text}`;
@@ -156,17 +192,25 @@ export async function setupBot(): Promise<void> {
     }
 
     if (userId && translationIntents.has(userId)) {
-      const intent = translationIntents.get(userId);
-      if (intent === 'pending') {
+      const intent = translationIntents.get(userId)!;
+      if (intent.stage === 'direction') {
         await ctx.reply('Выберите направление перевода:', {
           reply_markup: translationKeyboard.reply_markup,
         });
-      } else {
-        await ctx.reply('Пожалуйста, пришлите ссылку на Instagram Reel для перевода.', {
-          reply_markup: translationKeyboard.reply_markup,
-        });
+        return;
       }
-      return;
+      if (intent.stage === 'engine') {
+        await ctx.reply('Выберите тип перевода:', {
+          reply_markup: engineChoiceKeyboard.reply_markup,
+        });
+        return;
+      }
+      if (intent.stage === 'ready') {
+        await ctx.reply('Пожалуйста, пришлите ссылку на Instagram Reel для перевода.', {
+          reply_markup: removeKeyboard.reply_markup,
+        });
+        return;
+      }
     }
 
     await ctx.reply("I don't understand that message. Use /help to see available commands.");

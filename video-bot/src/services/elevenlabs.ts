@@ -64,7 +64,8 @@ async function downloadFile(fileUrl: string, destinationPath: string, apiKey: st
 
 export async function dubVideoWithElevenLabs(
   sourceAudioPath: string,
-  targetLanguage: string
+  targetLanguage: string,
+  sourceLanguage: string = 'auto'
 ): Promise<string> {
   const apiKey = ensureApiKey();
 
@@ -79,6 +80,7 @@ export async function dubVideoWithElevenLabs(
   const form = new FormData();
   form.append('mode', 'automatic');
   form.append('target_lang', targetLanguage);
+  form.append('source_lang', sourceLanguage);
   form.append('num_speakers', '0');
   form.append('file', fs.createReadStream(absoluteSourcePath));
 
