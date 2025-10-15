@@ -324,12 +324,6 @@ export async function translateInstagramReel(
       const gender = analysis.speakers[segment.speaker]?.gender || 'unknown';
       const dominantEmotion = pickDominantEmotion(segment);
       const voiceId = selectVoiceId(target, gender);
-      const languageOption = target === 'ru' ? 'ru' : 'en';
-      const emotionOption = dominantEmotion
-        ? dominantEmotion.score !== undefined
-          ? { name: dominantEmotion.name, score: dominantEmotion.score }
-          : { name: dominantEmotion.name }
-        : undefined;
 
       logger.debug(
         {
@@ -351,11 +345,12 @@ export async function translateInstagramReel(
           const ttsOptions: Parameters<typeof synthesizeSpeech>[2] = {
             voiceId,
             speed: cappedSpeed,
-            language: languageOption,
-            gender,
           };
-          if (emotionOption) {
-            ttsOptions.emotion = emotionOption;
+          if (dominantEmotion?.name) {
+            const rawScore = dominantEmotion.score;
+            const score =
+              typeof rawScore === 'number' && Number.isFinite(rawScore) ? rawScore : 1.0;
+            ttsOptions.emotion = { name: dominantEmotion.name, score };
           }
           await synthesizeSpeech(textForSegment, partPath, ttsOptions);
         })()
