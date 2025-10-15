@@ -4,7 +4,12 @@ import { getProvider } from '../providers';
 import { AppError, ERROR_CODES } from '../core/errors';
 import { config } from '../core/config';
 import { logger } from '../core/logger';
-import { concatenateAudioParts, muxFinalVideo } from '../core/media';
+import {
+  concatenateAudioParts,
+  extractBackgroundMusic,
+  mixVoiceWithBackground,
+  muxFinalVideo,
+} from '../core/media';
 import { run } from '../core/exec';
 import { transcribeWithWhisper } from '../services/whisper';
 import { translateText } from '../services/translator';
@@ -376,13 +381,19 @@ export async function translateInstagramReel(
   }
 
   await Promise.all(synthesisTasks);
-  const finalAudioPath = path.join(sessionDir, 'final_audio.mp3');
+  const finalVoiceTrackPath = path.join(sessionDir, 'final_voice_track.mp3');
   const missingParts = audioParts.filter((partPath) => !fs.existsSync(partPath));
   if (missingParts.length > 0) {
     logger.warn({ missingPartsCount: missingParts.length }, 'Some synthesized parts are missing on disk');
   }
   const existingParts = audioParts.filter((partPath) => fs.existsSync(partPath));
-  await concatenateAudioParts(existingParts, finalAudioPath);
+  await concatenateAudioParts(existingParts, finalVoiceTrackPath);
+
+  const backgroundMusicPath = path.join(sessionDir, 'background_music.wav');
+  await extractBackgroundMusic(downloadPath, backgroundMusicPath);
+
+  const finalAudioPath = path.join(sessionDir, 'final_audio.mp3');
+  await mixVoiceWithBackground(backgroundMusicPath, finalVoiceTrackPath, finalAudioPath);
   completeStage(synthStage);
   await notifyObserver(observer, synthStage);
 

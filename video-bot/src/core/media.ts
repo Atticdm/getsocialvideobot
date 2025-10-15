@@ -10,13 +10,16 @@ export async function concatenateAudioParts(partPaths: string[], outputPath: str
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'No audio parts to concatenate.');
   }
 
-  const inputs = partPaths.flatMap((p) => ['-i', p]);
-  const filterParts = partPaths.map((_, i) => `[${i}:a]`);
-  const filterComplex = `${filterParts.join('')}concat=n=${partPaths.length}:v=0:a=1[a]`;
+  const args = ['-y'];
 
-  const args = [
-    '-y',
-    ...inputs,
+  partPaths.forEach((partPath) => {
+    args.push('-i', partPath);
+  });
+
+  const concatFilterInputs = partPaths.map((_, index) => `[${index}:a]`).join('');
+  const filterComplex = `${concatFilterInputs}concat=n=${partPaths.length}:v=0:a=1[a]`;
+
+  args.push(
     '-filter_complex',
     filterComplex,
     '-map',
@@ -25,8 +28,8 @@ export async function concatenateAudioParts(partPaths: string[], outputPath: str
     'libmp3lame',
     '-q:a',
     '4',
-    outputPath,
-  ];
+    outputPath
+  );
 
   const result = await run(ffmpegBinary, args, { timeout: 240000 });
   if (result.code !== 0) {
@@ -34,6 +37,56 @@ export async function concatenateAudioParts(partPaths: string[], outputPath: str
       stderr: result.stderr,
       args,
     });
+  }
+}
+
+export async function extractBackgroundMusic(
+  inputVideoPath: string,
+  outputMusicPath: string
+): Promise<void> {
+  const args = [
+    '-y',
+    '-i',
+    inputVideoPath,
+    '-vn',
+    '-acodec',
+    'pcm_s16le',
+    outputMusicPath,
+  ];
+
+  const result = await run(ffmpegBinary, args, { timeout: 240000 });
+  if (result.code !== 0) {
+    logger.error('Background music extraction failed', { stderr: result.stderr });
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to extract background music track');
+  }
+}
+
+export async function mixVoiceWithBackground(
+  backgroundMusicPath: string,
+  voiceTrackPath: string,
+  outputAudioPath: string
+): Promise<void> {
+  const args = [
+    '-y',
+    '-i',
+    backgroundMusicPath,
+    '-i',
+    voiceTrackPath,
+    '-filter_complex',
+    '[0:a]stereotools=mlev=0[bg];[bg][1:a]amix=inputs=2:normalize=0[aout]',
+    '-map',
+    '[aout]',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '192k',
+    outputAudioPath,
+  ];
+
+  const result = await run(ffmpegBinary, args, { timeout: 240000 });
+  if (result.code !== 0) {
+    logger.error('Voice/background mix failed', { stderr: result.stderr });
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to mix voice with background music');
   }
 }
 
