@@ -16,6 +16,10 @@ type TtsOptions = {
   emotion?: { name: string; score?: number } | string;
 };
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
 export async function synthesizeSpeech(
   text: string,
   outputPath: string,
@@ -33,14 +37,17 @@ export async function synthesizeSpeech(
     text,
   };
 
-  const descriptionParts: string[] = [];
-
   if (options.voiceId) {
-    utterance['voice'] = { id: options.voiceId };
+    utterance['voice'] = {
+      id: options.voiceId,
+      provider: 'HUME_AI',
+    };
   }
 
+  const descriptionParts: string[] = [];
+
   if (typeof options.speed === 'number' && Number.isFinite(options.speed)) {
-    const clampedSpeed = Math.max(0.5, Math.min(options.speed, 2));
+    const clampedSpeed = clamp(options.speed, 0.5, 2);
     utterance['speed'] = Number(clampedSpeed.toFixed(2));
   }
 
@@ -48,16 +55,14 @@ export async function synthesizeSpeech(
     utterance['trailing_silence'] = Number(options.trailingSilence.toFixed(3));
   }
 
-  if (options.gender) {
+  if (options.gender && options.gender !== 'unknown') {
     descriptionParts.push(`gender=${options.gender}`);
   }
 
   if (options.emotion) {
-    if (typeof options.emotion === 'string') {
-      descriptionParts.push(`emotion=${options.emotion}`);
-    } else if (options.emotion.name) {
-      const scorePart = typeof options.emotion.score === 'number' ? `:${options.emotion.score.toFixed(3)}` : '';
-      descriptionParts.push(`emotion=${options.emotion.name}${scorePart}`);
+    const emotionValue = typeof options.emotion === 'string' ? options.emotion : options.emotion.name;
+    if (emotionValue) {
+      descriptionParts.push(`emotion=${emotionValue}`);
     }
   }
 
@@ -69,8 +74,36 @@ export async function synthesizeSpeech(
     utterance['description'] = descriptionParts.join('; ');
   }
 
+  if (options.emotion) {
+    const emotionName = typeof options.emotion === 'string' ? options.emotion : options.emotion.name;
+    const rawScore =
+      typeof options.emotion === 'string'
+        ? undefined
+        : options.emotion.score;
+    if (emotionName) {
+      const prosodyEmotion: Record<string, unknown> = {
+        name: emotionName,
+      };
+      if (typeof rawScore === 'number' && Number.isFinite(rawScore)) {
+        prosodyEmotion['intensity'] = Number(clamp(rawScore, 0, 1).toFixed(3));
+      }
+      utterance['prosody'] = {
+        instructions: [
+          {
+            type: 'global',
+            emotion: prosodyEmotion,
+          },
+        ],
+      };
+    }
+  }
+
   const requestBody: Record<string, unknown> = {
     utterances: [utterance],
+    format: {
+      type: 'mp3',
+    },
+    num_generations: 1,
   };
 
   if (options.language === 'ru') {
@@ -114,6 +147,7 @@ export async function synthesizeSpeech(
     logger.error({
       err: error,
       details: errorDetails,
+      requestBody,
     }, 'Hume TTS synthesis failed');
     throw new AppError(
       ERROR_CODES.ERR_TTS_FAILED,
