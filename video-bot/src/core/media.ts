@@ -105,13 +105,17 @@ export async function mixVoiceWithBackground(
     '-i',
     voiceTrackPath,
     '-filter_complex',
-    '[0:a]volume=0.35,aresample=async=1[minbg];[1:a]volume=1.0,aresample=async=1[voice];[minbg][voice]amix=inputs=2:normalize=0:dropout_transition=0[aout]',
+    '[0:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.35[minbg];'
+    + '[1:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1.0[voice];'
+    + '[minbg][voice]amix=inputs=2:normalize=0:dropout_transition=0[aout]',
     '-map',
     '[aout]',
     '-c:a',
     'aac',
     '-b:a',
     '192k',
+    '-ac',
+    '2',
     outputAudioPath,
   ];
 
