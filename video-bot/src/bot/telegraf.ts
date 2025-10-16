@@ -23,7 +23,7 @@ export const bot = new Telegraf(config.BOT_TOKEN!);
 
 let handlersRegistered = false;
 let signalsRegistered = false;
-const translationIntents = new Map<number, TranslationIntent>();
+export const translationIntents = new Map<number, TranslationIntent>();
 
 async function logToolVersions(): Promise<void> {
   try {
@@ -66,17 +66,7 @@ export async function setupBot(): Promise<void> {
   bot.command('dl', downloadCommand);
   bot.command('get', downloadCommand);
   bot.command('diag', diagCommand);
-  bot.command('translate', async (ctx) => {
-    try {
-      await translateCommand(ctx);
-    } finally {
-      const userId = ctx.from?.id;
-      if (userId) translationIntents.delete(userId);
-      await ctx.reply('Готово. Выберите дальнейшее действие.', {
-        reply_markup: mainKeyboard.reply_markup,
-      });
-    }
-  });
+  bot.command('translate', translateCommand);
 
   setupInlineHandlers(bot);
 

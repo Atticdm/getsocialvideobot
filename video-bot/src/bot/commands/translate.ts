@@ -8,6 +8,8 @@ import { TranslationDirection, TranslationEngine, TranslationStage } from '../..
 import { AppError, toUserMessage } from '../../core/errors';
 import { logger } from '../../core/logger';
 import * as path from 'path';
+import { translationIntents } from '../telegraf';
+import { mainKeyboard } from '../../ui/keyboard';
 
 const stageLabels: Record<TranslationStage['name'], string> = {
   download: 'Скачиваю видео',
@@ -158,5 +160,9 @@ export async function translateCommand(ctx: Context): Promise<void> {
     await ctx.reply(message);
   } finally {
     release();
+    translationIntents.delete(userId);
+    await ctx.reply('Готово. Выберите дальнейшее действие.', {
+      reply_markup: mainKeyboard.reply_markup,
+    });
   }
 }
