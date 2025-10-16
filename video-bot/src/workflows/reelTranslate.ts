@@ -159,7 +159,7 @@ function sourceLanguageFromDirection(direction: TranslationDirection): string | 
 }
 
 async function runElevenLabsPipeline(
-  downloadPath: string,
+  originalAudioPath: string,
   sessionDir: string,
   videoInfo: VideoInfo,
   options: ReelTranslationOptions,
@@ -168,12 +168,9 @@ async function runElevenLabsPipeline(
 ): Promise<PipelineResult> {
   const dubStage = beginStage('elevenlabs-dub', stages);
   try {
-    const extractedAudioPath = path.join(sessionDir, `${videoInfo.id}.original.wav`);
-    await run(config.FFMPEG_PATH, ['-y', '-i', downloadPath, '-vn', '-acodec', 'pcm_s16le', '-ar', '44100', extractedAudioPath]);
-
     const targetLang = targetLanguageFromDirection(options.direction);
     const sourceLang = sourceLanguageFromDirection(options.direction);
-    const dubbedPath = await dubVideoWithElevenLabs(extractedAudioPath, targetLang, sourceLang);
+    const dubbedPath = await dubVideoWithElevenLabs(originalAudioPath, targetLang, sourceLang);
 
     const sessionAudioPath = path.join(sessionDir, `${videoInfo.id}.elevenlabs.mp3`);
     await fs.ensureDir(path.dirname(sessionAudioPath));
@@ -202,8 +199,8 @@ async function runElevenLabsPipeline(
 
 async function runHumePipeline(
   downloadPath: string,
+  originalAudioPath: string,
   sessionDir: string,
-  videoInfo: VideoInfo,
   options: ReelTranslationOptions,
   stages: TranslationStage[],
   observer?: (stage: TranslationStage) => void
@@ -211,10 +208,7 @@ async function runHumePipeline(
   const analysisStage = beginStage('analyze-audio', stages);
   let analysis: AudioAnalysis;
   try {
-    const fullAudioPath = paths.session.originalAudio(sessionDir, videoInfo.id);
-    await run(config.FFMPEG_PATH, ['-y', '-i', downloadPath, '-ar', '16000', '-ac', '1', fullAudioPath]);
-
-    const analysisResult = await run(config.PYTHON_PATH, [paths.scripts.humeAnalyze, fullAudioPath], {
+    const analysisResult = await run(config.PYTHON_PATH, [paths.scripts.humeAnalyze, originalAudioPath], {
       timeout: 240000,
     });
 
@@ -298,7 +292,7 @@ async function runHumePipeline(
   }
 
   const transcribeStage = beginStage('transcribe', stages);
-  const whisperOutput = await transcribeWithWhisper(paths.session.originalAudio(sessionDir, videoInfo.id));
+  const whisperOutput = await transcribeWithWhisper(originalAudioPath);
   completeStage(transcribeStage);
   await notifyObserver(observer, transcribeStage);
 
@@ -482,11 +476,37 @@ export async function translateInstagramReel(
   completeStage(downloadStage);
   await notifyObserver(observer, downloadStage);
 
+  const originalAudioPath = paths.session.originalAudio(sessionDir, videoInfo.id);
+  const extractAudioResult = await run(config.FFMPEG_PATH, [
+    '-y',
+    '-i',
+    downloadPath,
+    '-vn',
+    '-acodec',
+    'libmp3lame',
+    '-ar',
+    '44100',
+    '-ac',
+    '2',
+    originalAudioPath,
+  ]);
+
+  if (extractAudioResult.code !== 0) {
+    logger.error(
+      {
+        stderr: extractAudioResult.stderr,
+        stdout: extractAudioResult.stdout,
+      },
+      'Failed to extract audio track to mp3'
+    );
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Не удалось извлечь аудио дорожку из видео');
+  }
+
   let pipelineResult: PipelineResult;
   if (options.engine === 'elevenlabs') {
-    pipelineResult = await runElevenLabsPipeline(downloadPath, sessionDir, videoInfo, options, stages, observer);
+    pipelineResult = await runElevenLabsPipeline(originalAudioPath, sessionDir, videoInfo, options, stages, observer);
   } else {
-    pipelineResult = await runHumePipeline(downloadPath, sessionDir, videoInfo, options, stages, observer);
+    pipelineResult = await runHumePipeline(downloadPath, originalAudioPath, sessionDir, options, stages, observer);
   }
 
   const muxStage = beginStage('mux', stages);

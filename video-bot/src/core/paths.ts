@@ -6,7 +6,7 @@ export const paths = {
     humeAnalyze: path.join(process.cwd(), 'scripts', 'hume_analyze.py'),
   },
   session: {
-    originalAudio: (sessionDir: string, videoId: string) => path.join(sessionDir, `${videoId}.wav`),
+    originalAudio: (sessionDir: string, videoId: string) => path.join(sessionDir, `${videoId}.mp3`),
     dubbedAudio: (sessionDir: string, videoId: string) => path.join(sessionDir, `${videoId}.dub.mp3`),
     finalVideo: (sessionDir: string, videoId: string) => path.join(sessionDir, `${videoId}.final.mp4`),
   },
