@@ -65,7 +65,7 @@ async function downloadFile(fileUrl: string, destinationPath: string, apiKey: st
 export async function dubVideoWithElevenLabs(
   sourceAudioPath: string,
   targetLanguage: string,
-  sourceLanguage: string = 'auto'
+  sourceLanguage?: string
 ): Promise<string> {
   const apiKey = ensureApiKey();
 
@@ -80,8 +80,14 @@ export async function dubVideoWithElevenLabs(
   const form = new FormData();
   form.append('mode', 'automatic');
   form.append('target_lang', targetLanguage);
-  form.append('source_lang', sourceLanguage);
+  if (sourceLanguage) {
+    form.append('source_lang', sourceLanguage);
+  }
   form.append('num_speakers', '0');
+  form.append('disable_voice_cloning', 'false');
+  form.append('dubbing_studio', 'false');
+  form.append('drop_background_audio', 'false');
+  form.append('name', `Dub-${randomUUID()}`);
   form.append('file', fs.createReadStream(absoluteSourcePath));
 
   let jobId: string | undefined;
@@ -104,7 +110,12 @@ export async function dubVideoWithElevenLabs(
 
     logger.info({ jobId }, 'ElevenLabs dubbing job submitted');
   } catch (error) {
-    logger.error({ error }, 'Failed to submit ElevenLabs dubbing job');
+    const axiosError = error as any;
+    logger.error({
+      error,
+      responseData: axiosError?.response?.data,
+      status: axiosError?.response?.status,
+    }, 'Failed to submit ElevenLabs dubbing job');
     throw error;
   }
 

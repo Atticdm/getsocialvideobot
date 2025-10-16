@@ -147,6 +147,17 @@ function targetLanguageFromDirection(direction: TranslationDirection): string {
   }
 }
 
+function sourceLanguageFromDirection(direction: TranslationDirection): string | undefined {
+  switch (direction) {
+    case 'ru-en':
+      return 'ru';
+    case 'en-ru':
+      return 'en';
+    default:
+      return undefined;
+  }
+}
+
 async function runElevenLabsPipeline(
   downloadPath: string,
   sessionDir: string,
@@ -161,7 +172,8 @@ async function runElevenLabsPipeline(
     await run(config.FFMPEG_PATH, ['-y', '-i', downloadPath, '-vn', '-acodec', 'pcm_s16le', '-ar', '44100', extractedAudioPath]);
 
     const targetLang = targetLanguageFromDirection(options.direction);
-    const dubbedPath = await dubVideoWithElevenLabs(extractedAudioPath, targetLang, 'auto');
+    const sourceLang = sourceLanguageFromDirection(options.direction);
+    const dubbedPath = await dubVideoWithElevenLabs(extractedAudioPath, targetLang, sourceLang);
 
     const sessionAudioPath = path.join(sessionDir, `${videoInfo.id}.elevenlabs.mp3`);
     await fs.ensureDir(path.dirname(sessionAudioPath));
