@@ -35,33 +35,6 @@ async function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function resolveAudioUrl(payload: DubbingJobResponse): string | undefined {
-  return (
-    payload.audio_url ||
-    payload.download_url ||
-    payload.share_url ||
-    payload.url ||
-    payload.result?.audio_url ||
-    payload.audio?.url
-  );
-}
-
-async function downloadFile(fileUrl: string, destinationPath: string, apiKey: string): Promise<void> {
-  const response = await axios.get(fileUrl, {
-    headers: { 'xi-api-key': apiKey },
-    responseType: 'stream',
-  });
-
-  await fs.ensureDir(path.dirname(destinationPath));
-
-  await new Promise<void>((resolve, reject) => {
-    const writer = fs.createWriteStream(destinationPath);
-    response.data.pipe(writer);
-    writer.on('finish', resolve);
-    writer.on('error', reject);
-  });
-}
-
 export async function dubVideoWithElevenLabs(
   sourceAudioPath: string,
   targetLanguage: string,
@@ -151,22 +124,25 @@ export async function dubVideoWithElevenLabs(
     throw new Error(`Timed out waiting for ElevenLabs dubbing job ${jobId}`);
   }
 
-  const audioUrl = resolveAudioUrl(jobPayload);
-  if (!audioUrl) {
-    throw new Error(`ElevenLabs dubbing job ${jobId} completed but no audio URL was provided`);
-  }
-
   const outputDir = path.join(config.DOWNLOAD_DIR, 'elevenlabs');
   const outputPath = path.join(outputDir, `dubbed-${randomUUID()}.mp3`);
 
-  logger.info({ jobId, audioUrl, outputPath }, 'Downloading ElevenLabs dubbed audio');
-
   try {
-    await downloadFile(audioUrl, outputPath, apiKey);
+    const audioResponse = await axios.get<ArrayBuffer>(
+      `${ELEVENLABS_BASE_URL}/dubbing/${jobId}/audio/${targetLanguage}`,
+      {
+        headers: { 'xi-api-key': apiKey },
+        responseType: 'arraybuffer',
+      }
+    );
+
+    await fs.ensureDir(path.dirname(outputPath));
+    await fs.writeFile(outputPath, Buffer.from(audioResponse.data));
+
     logger.info({ outputPath }, 'ElevenLabs dubbed audio downloaded');
     return outputPath;
   } catch (error) {
-    logger.error({ error, jobId, audioUrl }, 'Failed to download ElevenLabs dubbed audio');
+    logger.error({ error, jobId }, 'Failed to download ElevenLabs dubbed audio');
     throw error;
   }
 }
