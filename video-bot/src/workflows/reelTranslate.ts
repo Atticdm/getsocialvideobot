@@ -8,6 +8,7 @@ import {
   concatenateAudioParts,
   extractBackgroundMusic,
   mixVoiceWithBackground,
+  mixVoiceWithInstrumental,
   muxFinalVideo,
 } from '../core/media';
 import { run } from '../core/exec';
@@ -15,6 +16,7 @@ import { transcribeWithWhisper } from '../services/whisper';
 import { translateText } from '../services/translator';
 import { synthesizeSpeech } from '../services/tts';
 import { paths } from '../core/paths';
+import { separateAudioWithLalal } from '../services/lalal';
 import {
   TranslationDirection,
   TranslationEngine,
@@ -203,12 +205,15 @@ async function runHumePipeline(
   sessionDir: string,
   options: ReelTranslationOptions,
   stages: TranslationStage[],
-  observer?: (stage: TranslationStage) => void
+  observer?: (stage: TranslationStage) => void,
+  vocalPath?: string,
+  instrumentalPath?: string
 ): Promise<PipelineResult> {
   const analysisStage = beginStage('analyze-audio', stages);
   let analysis: AudioAnalysis;
   try {
-    const analysisResult = await run(config.PYTHON_PATH, [paths.scripts.humeAnalyze, originalAudioPath], {
+    const analysisSource = vocalPath || originalAudioPath;
+    const analysisResult = await run(config.PYTHON_PATH, [paths.scripts.humeAnalyze, analysisSource], {
       timeout: 240000,
     });
 
@@ -292,7 +297,8 @@ async function runHumePipeline(
   }
 
   const transcribeStage = beginStage('transcribe', stages);
-  const whisperOutput = await transcribeWithWhisper(originalAudioPath);
+  const transcriptionSource = vocalPath || originalAudioPath;
+  const whisperOutput = await transcribeWithWhisper(transcriptionSource);
   completeStage(transcribeStage);
   await notifyObserver(observer, transcribeStage);
 
@@ -447,11 +453,19 @@ async function runHumePipeline(
   const existingParts = audioParts.filter((partPath) => fs.existsSync(partPath));
   await concatenateAudioParts(existingParts, finalVoiceTrackPath);
 
-  const backgroundMusicPath = path.join(sessionDir, 'background_music.wav');
-  await extractBackgroundMusic(downloadPath, backgroundMusicPath);
-
   const finalAudioPath = path.join(sessionDir, 'final_audio.mp3');
-  await mixVoiceWithBackground(backgroundMusicPath, finalVoiceTrackPath, finalAudioPath);
+  const mixInstrumental = instrumentalPath;
+  if (!mixInstrumental) {
+    logger.warn(
+      { sessionDir },
+      'Instrumental track missing, falling back to original background extraction'
+    );
+    const backgroundMusicPath = path.join(sessionDir, 'background_music.wav');
+    await extractBackgroundMusic(downloadPath, backgroundMusicPath);
+    await mixVoiceWithBackground(backgroundMusicPath, finalVoiceTrackPath, finalAudioPath);
+  } else {
+    await mixVoiceWithInstrumental(mixInstrumental, finalVoiceTrackPath, finalAudioPath);
+  }
   completeStage(synthStage);
   await notifyObserver(observer, synthStage);
 
@@ -502,11 +516,43 @@ export async function translateInstagramReel(
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Не удалось извлечь аудио дорожку из видео');
   }
 
+  const separationStage = beginStage('separate', stages);
+  let vocalPath: string;
+  let instrumentalPath: string;
+  try {
+    const splitResult = await separateAudioWithLalal(originalAudioPath);
+    vocalPath = splitResult.vocalPath;
+    instrumentalPath = splitResult.instrumentalPath;
+    completeStage(separationStage);
+    await notifyObserver(observer, separationStage);
+  } catch (error) {
+    failStage(separationStage, error);
+    await notifyObserver(observer, separationStage);
+    logger.error(
+      {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        originalAudioPath,
+      },
+      'LALAL separation failed'
+    );
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Не удалось разделить аудио дорожку', { cause: error });
+  }
+
   let pipelineResult: PipelineResult;
   if (options.engine === 'elevenlabs') {
     pipelineResult = await runElevenLabsPipeline(originalAudioPath, sessionDir, videoInfo, options, stages, observer);
   } else {
-    pipelineResult = await runHumePipeline(downloadPath, originalAudioPath, sessionDir, options, stages, observer);
+    pipelineResult = await runHumePipeline(
+      downloadPath,
+      originalAudioPath,
+      sessionDir,
+      options,
+      stages,
+      observer,
+      vocalPath,
+      instrumentalPath
+    );
   }
 
   const muxStage = beginStage('mux', stages);

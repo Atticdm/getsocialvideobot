@@ -61,6 +61,44 @@ export async function extractBackgroundMusic(
   }
 }
 
+export async function mixVoiceWithInstrumental(
+  instrumentalPath: string,
+  voiceTrackPath: string,
+  outputAudioPath: string
+): Promise<void> {
+  const args = [
+    '-y',
+    '-i',
+    instrumentalPath,
+    '-i',
+    voiceTrackPath,
+    '-filter_complex',
+    '[0:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.9[instr];'
+      + '[1:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1.0[voice];'
+      + '[instr][voice]amix=inputs=2:normalize=0:dropout_transition=0[aout]',
+    '-map',
+    '[aout]',
+    '-c:a',
+    'libmp3lame',
+    '-b:a',
+    '192k',
+    '-ar',
+    '44100',
+    '-ac',
+    '2',
+    outputAudioPath,
+  ];
+
+  const result = await run(ffmpegBinary, args, { timeout: 240000 });
+  if (result.code !== 0) {
+    logger.error('Instrumental/voice mix failed', { stderr: result.stderr });
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to mix voice with instrumental track', {
+      stderr: result.stderr,
+      args,
+    });
+  }
+}
+
 export async function mixVoiceWithBackground(
   backgroundMusicPath: string,
   voiceTrackPath: string,

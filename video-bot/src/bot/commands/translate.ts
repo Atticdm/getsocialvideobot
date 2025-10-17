@@ -13,6 +13,7 @@ import { mainKeyboard } from '../../ui/keyboard';
 
 const stageLabels: Record<TranslationStage['name'], string> = {
   download: 'Скачиваю видео',
+  separate: 'Разделяю голос и музыку (LALAL.AI)',
   'analyze-audio': 'Анализирую голос и паузы',
   transcribe: 'Распознаю речь (Whisper)',
   translate: 'Перевожу текст (ChatGPT)',

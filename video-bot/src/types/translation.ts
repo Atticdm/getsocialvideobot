@@ -10,6 +10,7 @@ export interface TranslationRequest {
 export interface TranslationStage {
   name:
     | 'download'
+    | 'separate'
     | 'analyze-audio'
     | 'transcribe'
     | 'translate'
