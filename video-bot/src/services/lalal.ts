@@ -14,23 +14,39 @@ const LALAL_CHECK_ENDPOINT = `${LALAL_API_BASE}/api/check/`;
 const POLL_INTERVAL_MS = 5000;
 const MAX_POLL_ATTEMPTS = 60;
 
-interface LalalUploadResponse {
+interface LalalBaseResponse {
+  status?: 'success' | 'error';
+  error?: string;
+}
+
+interface LalalUploadResponse extends LalalBaseResponse {
   uuid?: string;
   id?: string;
 }
 
-interface LalalCheckResponse {
+interface LalalSplitResponse extends LalalBaseResponse {
+  task_id?: string;
+}
+
+interface LalalCheckResponse extends LalalBaseResponse {
   result?: Record<
     string,
     {
+      status?: 'success' | 'error';
+      name?: string;
+      error?: string;
       task?: {
         state?: string;
-        message?: string;
-      };
+        error?: string | null;
+        progress?: number | null;
+      } | null;
       split?: {
+        stem?: string;
         stem_track?: string;
         back_track?: string;
-      };
+        stem_track_size?: number;
+        back_track_size?: number;
+      } | null;
     }
   >;
 }
@@ -93,10 +109,18 @@ async function uploadAudio(apiKey: string, audioPath: string): Promise<string> {
   };
 
   try {
-    const response: AxiosResponse<LalalUploadResponse> = await axios.post(LALAL_UPLOAD_ENDPOINT, form, {
-      headers,
-      timeout: 240000,
-    });
+    const response: AxiosResponse<LalalUploadResponse> = await axios.post(
+      LALAL_UPLOAD_ENDPOINT,
+      form,
+      {
+        headers,
+        timeout: 240000,
+      }
+    );
+    if (response.data?.status !== 'success') {
+      const message = response.data?.error || 'Unknown LALAL upload error';
+      throw new Error(message);
+    }
     const uploadId = response.data?.uuid || response.data?.id;
     if (!uploadId) {
       throw new Error('Upload response missing file id');
@@ -117,7 +141,7 @@ async function triggerSplit(apiKey: string, fileId: string): Promise<void> {
   payload.append('params', JSON.stringify([{ id: fileId, stem: 'vocals' }]));
 
   try {
-    await axios.post(
+    const response: AxiosResponse<LalalSplitResponse> = await axios.post(
       LALAL_SPLIT_ENDPOINT,
       payload.toString(),
       {
@@ -128,6 +152,10 @@ async function triggerSplit(apiKey: string, fileId: string): Promise<void> {
         timeout: 120000,
       }
     );
+    if (response.data?.status !== 'success') {
+      const message = response.data?.error || 'Unknown LALAL split error';
+      throw new Error(message);
+    }
   } catch (error) {
     logLalalError(error, fileId, 'split');
     throw new AppError(
@@ -149,7 +177,7 @@ async function pollForResult(
 
     try {
       const payload = new URLSearchParams();
-      payload.append('ids', JSON.stringify([fileId]));
+      payload.append('id', fileId);
 
       const response: AxiosResponse<LalalCheckResponse> = await axios.post(
         LALAL_CHECK_ENDPOINT,
@@ -163,23 +191,43 @@ async function pollForResult(
         }
       );
 
-      const entry = response.data?.result?.[fileId];
+      const data = response.data;
+      if (data?.status === 'error') {
+        const message = data.error || 'LALAL.AI status returned error';
+        logger.error({ fileId, message }, 'LALAL: split status error');
+        throw new Error(message);
+      }
+
+      const entry = data?.result?.[fileId];
+      if (!entry) {
+        logger.debug({ fileId, attempt, state: 'pending' }, 'LALAL: split status entry missing');
+        continue;
+      }
+
+      if (entry.status === 'error') {
+        const message = entry.error || 'LALAL.AI split task failed';
+        logger.error({ fileId, message }, 'LALAL: split result marked error');
+        throw new Error(message);
+      }
+
       const state = entry?.task?.state;
 
       logger.debug({ fileId, attempt, state }, 'LALAL: polling split status');
 
-      if (state === 'success') {
-        const stemUrl = entry?.split?.stem_track;
-        const backUrl = entry?.split?.back_track;
-        if (!stemUrl || !backUrl) {
-          throw new Error('Missing split URLs in success response');
-        }
-        return { stemUrl, backUrl };
+      if (state === 'error') {
+        const message = entry?.task?.error || 'LALAL.AI split task reported error';
+        logger.error({ fileId, message }, 'LALAL: split task state error');
+        throw new Error(message);
       }
 
-      if (state === 'error') {
-        const message = entry?.task?.message || 'Unknown LALAL.AI error';
-        throw new Error(`LALAL split failed: ${message}`);
+      if (state === 'cancelled') {
+        throw new Error('LALAL.AI split task was cancelled');
+      }
+
+      const stemUrl = entry?.split?.stem_track;
+      const backUrl = entry?.split?.back_track;
+      if (stemUrl && backUrl) {
+        return { stemUrl, backUrl };
       }
     } catch (error) {
       logLalalError(error, fileId, 'poll');
