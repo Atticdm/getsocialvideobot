@@ -74,7 +74,7 @@ export async function mixVoiceWithInstrumental(
     voiceTrackPath,
     '-filter_complex',
     '[0:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.9[instr];'
-      + '[1:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1.0[voice];'
+      + '[1:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=3.0[voice];'
       + '[instr][voice]amix=inputs=2:normalize=0:dropout_transition=0[aout]',
     '-map',
     '[aout]',
@@ -119,7 +119,9 @@ export async function mixVoiceWithBackground(
     '-i',
     voiceTrackPath,
     '-filter_complex',
-    '[0:a]stereotools=mlev=0[bg];[bg][1:a]amix=inputs=2:normalize=0[aout]',
+    '[0:a]stereotools=mlev=0[bg];'
+    + '[1:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=3.0[voice];'
+    + '[bg][voice]amix=inputs=2:normalize=0[aout]',
     '-map',
     '[aout]',
     '-c:a',
@@ -148,7 +150,7 @@ export async function mixVoiceWithBackground(
     voiceTrackPath,
     '-filter_complex',
     '[0:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.35[minbg];'
-    + '[1:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1.0[voice];'
+    + '[1:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=3.0[voice];'
     + '[minbg][voice]amix=inputs=2:normalize=0:dropout_transition=0[aout]',
     '-map',
     '[aout]',
