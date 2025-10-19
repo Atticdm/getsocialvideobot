@@ -7,6 +7,7 @@ import { logger } from '../core/logger';
 import {
   concatenateAudioParts,
   extractBackgroundMusic,
+  getAudioDuration,
   mixVoiceWithBackground,
   mixVoiceWithInstrumental,
   muxFinalVideo,
@@ -666,12 +667,10 @@ async function runElevenLabsTtsPipeline(
   );
 
   const mergedSegments = mergeSmallSegments(speechSegments);
-  await notifyObserver(observer, {
-    name: 'tts-queue',
-    startedAt: Date.now(),
-    completedAt: Date.now(),
-    meta: { requests: mergedSegments.length },
-  });
+
+  const ttsQueueStage = beginStage('tts-queue', stages, { requests: mergedSegments.length });
+  completeStage(ttsQueueStage);
+  await notifyObserver(observer, ttsQueueStage);
 
   const synthStage = beginStage('synthesize', stages);
   const audioParts: string[] = [];
@@ -681,9 +680,11 @@ async function runElevenLabsTtsPipeline(
   let textOffset = 0;
   let remainingSpeechSegments = mergedSegments.length;
 
+  const ffmpegCmd = config.FFMPEG_PATH || 'ffmpeg';
+
   const queueSilence = async (duration: number, outputPath: string): Promise<void> => {
     const effectiveDuration = duration > 0.01 ? duration : 0.01;
-    await run(config.FFMPEG_PATH, [
+    await run(ffmpegCmd, [
       '-f',
       'lavfi',
       '-i',
@@ -762,6 +763,25 @@ async function runElevenLabsTtsPipeline(
       }
 
       await synthesizeWithRetry(textForSegment, partPath);
+
+      const actualDuration = await getAudioDuration(partPath);
+      const targetDuration = durationSeconds;
+      if (actualDuration > 0 && targetDuration > 0 && actualDuration > targetDuration * 1.03) {
+        let speed = actualDuration / targetDuration;
+        if (speed > 1.3) speed = 1.3;
+        const tempPath = `${partPath}.tempo.mp3`;
+        await run(ffmpegCmd, [
+          '-y',
+          '-i',
+          partPath,
+          '-filter:a',
+          `atempo=${speed.toFixed(3)}`,
+          tempPath,
+        ]);
+        await fs.promises.rename(tempPath, partPath);
+        logger.debug({ speed, segmentIndex: i, actualDuration, targetDuration }, 'Adjusted TTS segment tempo');
+      }
+
       continue;
     }
 

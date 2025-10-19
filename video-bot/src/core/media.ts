@@ -4,6 +4,37 @@ import { logger } from './logger';
 import { config } from './config';
 
 const ffmpegBinary = config.FFMPEG_PATH || 'ffmpeg';
+const ffprobeBinary = config.FFMPEG_PATH ? config.FFMPEG_PATH.replace(/ffmpeg$/i, 'ffprobe') : 'ffprobe';
+
+export async function getAudioDuration(path: string): Promise<number> {
+  try {
+    const args = [
+      '-v',
+      'error',
+      '-show_entries',
+      'format=duration',
+      '-of',
+      'default=noprint_wrappers=1:nokey=1',
+      path,
+    ];
+
+    const result = await run(ffprobeBinary, args, { timeout: 15000 });
+    if (result.code !== 0) {
+      logger.warn('ffprobe failed to parse duration', { path, stderr: result.stderr, stdout: result.stdout });
+      return 0;
+    }
+
+    const duration = parseFloat(result.stdout.trim());
+    if (!Number.isFinite(duration) || duration < 0) {
+      logger.warn('ffprobe returned invalid duration', { path, stdout: result.stdout });
+      return 0;
+    }
+    return duration;
+  } catch (error) {
+    logger.warn({ error: error instanceof Error ? error.message : String(error), path }, 'getAudioDuration failed');
+    return 0;
+  }
+}
 
 export async function concatenateAudioParts(partPaths: string[], outputPath: string): Promise<void> {
   if (partPaths.length === 0) {
