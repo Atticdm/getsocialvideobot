@@ -158,3 +158,37 @@ export async function dubVideoWithElevenLabs(
     throw error;
   }
 }
+
+export async function synthesizeWithElevenLabsTTS(
+  text: string,
+  voiceId: string,
+  outputPath: string,
+  modelId: string = config.ELEVENLABS_TTS_MODEL_ID
+): Promise<string> {
+  const apiKey = ensureApiKey();
+  const payload = {
+    text: text && text.trim().length ? text : '.',
+    model_id: modelId,
+  };
+
+  try {
+    const response = await axios.post<ArrayBuffer>(
+      `${ELEVENLABS_BASE_URL}/text-to-speech/${voiceId}`,
+      payload,
+      {
+        headers: {
+          'xi-api-key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'arraybuffer',
+      }
+    );
+
+    await fs.ensureDir(path.dirname(outputPath));
+    await fs.writeFile(outputPath, Buffer.from(response.data));
+    return outputPath;
+  } catch (error) {
+    logger.error({ error, voiceId }, 'Failed to synthesize ElevenLabs TTS audio');
+    throw error;
+  }
+}

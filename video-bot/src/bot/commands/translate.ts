@@ -24,10 +24,10 @@ const stageLabels: Record<TranslationStage['name'], string> = {
   'analyze-audio': 'Анализирую голос и паузы',
   transcribe: 'Распознаю речь (Whisper)',
   translate: 'Перевожу текст (ChatGPT)',
-  synthesize: 'Озвучиваю перевод (Hume)',
-  'elevenlabs-dub': 'Озвучиваю через ElevenLabs',
+  synthesize: 'Озвучиваю перевод',
+  'elevenlabs-dub': 'Озвучиваю через ElevenLabs (dubbing)',
   mux: 'Собираю видео с новой озвучкой',
-  'select-voice': 'Выбираю голос Терминатора',
+  'select-voice': 'Выбираю голос ElevenLabs',
 };
 
 function parseDirection(token?: string): TranslationDirection {
@@ -111,7 +111,7 @@ export async function translateCommand(ctx: Context): Promise<void> {
   const url = args[0];
   const direction = parseDirection(args[1]);
   const { engine, voicePreset } = parseEngineAndVoice(args[2], direction);
-  const mode = deriveMode(direction);
+  const mode = voicePreset ? ('voice' as TranslationMode) : deriveMode(direction);
 
   if (!url) {
     await ctx.reply(

@@ -210,7 +210,7 @@ export async function setupBot(): Promise<void> {
     }
 
     if (choice === 'terminator') {
-      translationIntents.set(userId, { stage: 'voice', direction, mode, engine: 'elevenlabs' });
+      translationIntents.set(userId, { stage: 'voice', direction, mode: 'voice', engine: 'elevenlabs' });
       const voiceLanguage =
         direction === 'en-ru' || direction === 'identity-ru'
           ? 'ru'
@@ -226,7 +226,7 @@ export async function setupBot(): Promise<void> {
 
   bot.hears('🚀 Быстрый (Hume)', (ctx) => registerModeChoice(ctx, 'hume'));
   bot.hears('💎 Качественный (ElevenLabs)', (ctx) => registerModeChoice(ctx, 'elevenlabs'));
-  bot.hears('🤖 Голос Терминатора', (ctx) => registerModeChoice(ctx, 'terminator'));
+  bot.hears('🎯 Голос Терминатора', (ctx) => registerModeChoice(ctx, 'terminator'));
 
   const registerVoicePreset = async (ctx: Context, preset: VoicePreset['id']) => {
     const userId = ctx.from?.id;

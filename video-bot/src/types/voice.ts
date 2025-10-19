@@ -8,3 +8,5 @@ export interface VoicePreset {
   language: VoiceLanguage;
   engine: VoiceEngine;
 }
+
+export type VoiceMode = 'tts-voice';

@@ -1,8 +1,6 @@
 import { Markup } from 'telegraf';
 
-export const mainKeyboard = Markup.keyboard([
-  ['🌐 Translate', '🎙 Перевод с озвучкой']
-]).resize();
+export const mainKeyboard = Markup.keyboard([['🌐 Translate', '🎙 Перевод с озвучкой']]).resize();
 
 export const translationKeyboard = Markup.keyboard([
   ['🇬🇧 → 🇷🇺', '🇷🇺 → 🇬🇧'],
@@ -12,8 +10,8 @@ export const translationKeyboard = Markup.keyboard([
 
 export const modeChoiceKeyboard = Markup.keyboard([
   ['🚀 Быстрый (Hume)', '💎 Качественный (ElevenLabs)'],
-  ['🤖 Голос Терминатора'],
-  ['⬅️ Back']
+  ['🎯 Голос Терминатора'],
+  ['⬅️ Back'],
 ]).resize();
 
 export const dubbingLanguageKeyboard = Markup.keyboard([

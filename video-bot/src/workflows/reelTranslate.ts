@@ -25,7 +25,7 @@ import {
   WhisperLanguage,
 } from '../types/translation';
 import type { VideoInfo } from '../providers/types';
-import { dubVideoWithElevenLabs, getVoiceIdForPreset } from '../services/elevenlabs';
+import { dubVideoWithElevenLabs, getVoiceIdForPreset, synthesizeWithElevenLabsTTS } from '../services/elevenlabs';
 
 type TimelineSegment = {
   speaker: string;
@@ -205,16 +205,20 @@ async function runElevenLabsPipeline(
   }
 }
 
-async function runHumePipeline(
-  downloadPath: string,
+interface PreparedSpeechData {
+  analysis: AudioAnalysis;
+  speechSegments: TimelineSegment[];
+  translatedText: string;
+  targetLanguage: WhisperLanguage;
+}
+
+async function prepareSpeechData(
   originalAudioPath: string,
-  sessionDir: string,
   options: TranslationOptions,
   stages: TranslationStage[],
   observer?: (stage: TranslationStage) => void,
-  vocalPath?: string,
-  instrumentalPath?: string
-): Promise<PipelineResult> {
+  vocalPath?: string
+): Promise<PreparedSpeechData> {
   const analysisStage = beginStage('analyze-audio', stages);
   let analysis: AudioAnalysis;
   try {
@@ -311,18 +315,48 @@ async function runHumePipeline(
   const { source, target } = resolveLanguages(options.direction, whisperOutput.language);
 
   let translatedText = whisperOutput.text;
-  if (options.mode !== 'dubbing') {
+  const isIdentityDirection = options.direction === 'identity-ru' || options.direction === 'identity-en';
+  const shouldTranslate = options.mode !== 'dubbing' && !(options.mode === 'voice' && isIdentityDirection);
+
+  if (shouldTranslate) {
     const translateStage = beginStage('translate', stages);
     translatedText = await translateText(whisperOutput.text, source, target);
     completeStage(translateStage);
     await notifyObserver(observer, translateStage);
   }
 
+  const speechSegments = analysis.segments.filter((segment) => isSpeechSegment(segment));
+
+  return {
+    analysis,
+    speechSegments,
+    translatedText,
+    targetLanguage: target,
+  };
+}
+
+async function runHumePipeline(
+  downloadPath: string,
+  originalAudioPath: string,
+  sessionDir: string,
+  options: TranslationOptions,
+  stages: TranslationStage[],
+  observer?: (stage: TranslationStage) => void,
+  vocalPath?: string,
+  instrumentalPath?: string
+): Promise<PipelineResult> {
+  const { analysis, speechSegments, translatedText, targetLanguage } = await prepareSpeechData(
+    originalAudioPath,
+    options,
+    stages,
+    observer,
+    vocalPath
+  );
+
   const synthStage = beginStage('synthesize', stages);
   const audioParts: string[] = [];
   const synthesisTasks: Array<Promise<void>> = [];
 
-  const speechSegments = analysis.segments.filter((segment) => isSpeechSegment(segment));
   const totalSpeechDuration = speechSegments.reduce((sum, segment) => sum + segmentDuration(segment), 0);
   const totalChars = translatedText.length;
   let remainingChars = totalChars;
@@ -400,7 +434,7 @@ async function runHumePipeline(
       const cappedSpeed = Math.max(0.7, Math.min(speedRatio, 1.8));
       const gender = analysis.speakers[segment.speaker]?.gender || 'unknown';
       const dominantEmotion = pickDominantEmotion(segment);
-      const voiceId = selectVoiceId(target, gender);
+      const voiceId = selectVoiceId(targetLanguage === 'unknown' ? 'ru' : targetLanguage, gender);
 
       logger.debug(
         {
@@ -475,6 +509,141 @@ async function runHumePipeline(
   } else {
     await mixVoiceWithInstrumental(mixInstrumental, finalVoiceTrackPath, finalAudioPath);
   }
+  completeStage(synthStage);
+  await notifyObserver(observer, synthStage);
+
+  return {
+    audioPath: finalAudioPath,
+    translatedText,
+    transcriptPath: '',
+  };
+}
+
+async function runElevenLabsTtsPipeline(
+  downloadPath: string,
+  originalAudioPath: string,
+  sessionDir: string,
+  options: TranslationOptions,
+  stages: TranslationStage[],
+  observer: ((stage: TranslationStage) => void | Promise<void>) | undefined,
+  vocalPath: string | undefined,
+  instrumentalPath: string | undefined,
+  voiceId: string
+): Promise<PipelineResult> {
+  const { analysis, speechSegments, translatedText } = await prepareSpeechData(
+    originalAudioPath,
+    options,
+    stages,
+    observer,
+    vocalPath
+  );
+
+  const synthStage = beginStage('synthesize', stages);
+  const audioParts: string[] = [];
+  const synthesisTasks: Array<Promise<void>> = [];
+
+  const totalSpeechDuration = speechSegments.reduce((sum, segment) => sum + segmentDuration(segment), 0);
+  const totalChars = translatedText.length;
+  let remainingChars = totalChars;
+  let textOffset = 0;
+  let remainingSpeechSegments = speechSegments.length;
+
+  const queueSilence = (duration: number, outputPath: string): Promise<void> => {
+    const effectiveDuration = duration > 0.01 ? duration : 0.01;
+    return run(config.FFMPEG_PATH, [
+      '-f',
+      'lavfi',
+      '-i',
+      'anullsrc=r=44100',
+      '-t',
+      String(effectiveDuration),
+      '-q:a',
+      '9',
+      outputPath,
+    ]).then(() => undefined);
+  };
+
+  for (let i = 0; i < analysis.segments.length; i++) {
+    const segment = analysis.segments[i];
+    const partPath = path.join(sessionDir, `tts_part_${i}.mp3`);
+    audioParts.push(partPath);
+
+    if (!segment) {
+      synthesisTasks.push(queueSilence(0.1, partPath));
+      continue;
+    }
+
+    if (isSpeechSegment(segment)) {
+      const durationSeconds = segmentDuration(segment);
+      let charCount = 0;
+
+      if (remainingSpeechSegments <= 1) {
+        charCount = remainingChars;
+      } else if (totalSpeechDuration > 0 && durationSeconds > 0 && totalChars > 0) {
+        charCount = Math.round((durationSeconds / totalSpeechDuration) * totalChars);
+      } else if (remainingSpeechSegments > 0) {
+        charCount = Math.floor(remainingChars / remainingSpeechSegments);
+      }
+
+      const minCharsToLeave = Math.max(0, remainingSpeechSegments - 1);
+      const maxForThisSegment = Math.max(0, remainingChars - minCharsToLeave);
+      if (charCount > maxForThisSegment) charCount = maxForThisSegment;
+      if (charCount < 0) charCount = 0;
+      if (charCount === 0 && remainingChars > minCharsToLeave && maxForThisSegment > 0) {
+        charCount = Math.min(1, maxForThisSegment);
+      }
+
+      const nextOffset = textOffset + charCount;
+      const rawTextPart = translatedText.slice(textOffset, nextOffset);
+      textOffset = nextOffset;
+      remainingChars -= charCount;
+      remainingSpeechSegments = Math.max(0, remainingSpeechSegments - 1);
+
+      const textForSegment = rawTextPart.trim();
+      if (!textForSegment.length) {
+        synthesisTasks.push(queueSilence(durationSeconds, partPath));
+        continue;
+      }
+
+      synthesisTasks.push(
+        (async () => {
+          const trimmedText = textForSegment.length > 0 ? textForSegment : '.';
+          await synthesizeWithElevenLabsTTS(trimmedText, voiceId, partPath, config.ELEVENLABS_TTS_MODEL_ID);
+        })()
+      );
+      continue;
+    }
+
+    const pauseDuration = segmentDuration(segment);
+    synthesisTasks.push(queueSilence(pauseDuration, partPath));
+  }
+
+  if (remainingChars > 0) {
+    logger.warn(
+      {
+        remainingChars,
+        totalChars,
+        remainingSpeechSegments,
+      },
+      'Not all translated text was allocated to segments (tts pipeline)'
+    );
+  }
+
+  await Promise.all(synthesisTasks);
+  const finalVoiceTrackPath = path.join(sessionDir, 'final_voice_track.tts.mp3');
+  const existingParts = audioParts.filter((partPath) => fs.existsSync(partPath));
+  await concatenateAudioParts(existingParts, finalVoiceTrackPath);
+
+  const finalAudioPath = path.join(sessionDir, 'final_audio.mp3');
+  const mixInstrumental = instrumentalPath;
+  if (!mixInstrumental) {
+    const backgroundMusicPath = path.join(sessionDir, 'background_music.wav');
+    await extractBackgroundMusic(downloadPath, backgroundMusicPath);
+    await mixVoiceWithBackground(backgroundMusicPath, finalVoiceTrackPath, finalAudioPath);
+  } else {
+    await mixVoiceWithInstrumental(mixInstrumental, finalVoiceTrackPath, finalAudioPath);
+  }
+
   completeStage(synthStage);
   await notifyObserver(observer, synthStage);
 
@@ -571,15 +740,34 @@ export async function translateInstagramReel(
 
   let pipelineResult: PipelineResult;
   if (options.engine === 'elevenlabs') {
-    pipelineResult = await runElevenLabsPipeline(
-      originalAudioPath,
-      sessionDir,
-      videoInfo,
-      options,
-      stages,
-      observer,
-      voiceIdOverride
-    );
+    if (options.mode === 'voice') {
+      if (!voiceIdOverride) {
+        throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Не настроен голос для озвучки', {
+          voicePreset: options.voicePreset,
+        });
+      }
+      pipelineResult = await runElevenLabsTtsPipeline(
+        downloadPath,
+        originalAudioPath,
+        sessionDir,
+        options,
+        stages,
+        observer,
+        vocalPath,
+        instrumentalPath,
+        voiceIdOverride
+      );
+    } else {
+      pipelineResult = await runElevenLabsPipeline(
+        originalAudioPath,
+        sessionDir,
+        videoInfo,
+        options,
+        stages,
+        observer,
+        voiceIdOverride
+      );
+    }
   } else {
     pipelineResult = await runHumePipeline(
       downloadPath,

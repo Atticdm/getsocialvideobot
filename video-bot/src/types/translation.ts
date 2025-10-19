@@ -2,7 +2,7 @@ import type { VoicePreset } from './voice';
 
 export type TranslationDirection = 'auto' | 'en-ru' | 'ru-en' | 'identity-ru' | 'identity-en';
 export type TranslationEngine = 'hume' | 'elevenlabs';
-export type TranslationMode = 'translate' | 'dubbing';
+export type TranslationMode = 'translate' | 'dubbing' | 'voice';
 
 export interface TranslationRequest {
   url: string;
