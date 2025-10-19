@@ -2,6 +2,7 @@ import { Context } from 'telegraf';
 import { run } from '../../core/exec';
 import { getFreeDiskSpace } from '../../core/fs';
 import { logger } from '../../core/logger';
+import { config } from '../../core/config';
 
 export async function statusCommand(ctx: Context): Promise<void> {
   try {
@@ -41,13 +42,18 @@ export async function statusCommand(ctx: Context): Promise<void> {
     const freeSpaceMB = Math.round(freeSpace / (1024 * 1024));
     const diskSpace = `${freeSpaceMB} MB`;
     
+    const terminatorRu = config.ELEVENLABS_TERMINATOR_VOICE_RU ? '✅' : '⚠️';
+    const terminatorEn = config.ELEVENLABS_TERMINATOR_VOICE_EN ? '✅' : '⚠️';
+    
     const message = `🔧 **Bot Status**
 
 **Version:** ${version}
 **yt-dlp:** ${ytdlpStatus}
 **ffmpeg:** ${ffmpegStatus}
 **Free disk space:** ${diskSpace}
-**Uptime:** ${uptime}`;
+**Uptime:** ${uptime}
+**Terminator (RU voice):** ${terminatorRu}
+**Terminator (EN voice):** ${terminatorEn}`;
     
     await ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {

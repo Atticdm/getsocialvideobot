@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 
 import { config } from '../core/config';
 import { logger } from '../core/logger';
+import type { VoicePreset } from '../types/voice';
 
 const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io/v1';
 const POLL_INTERVAL_MS = 5000;
@@ -35,10 +36,18 @@ async function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function getVoiceIdForPreset(preset: VoicePreset['id']): string | undefined {
+  const trimmed = (value: string | undefined) => (value && value.trim().length ? value.trim() : undefined);
+  if (preset === 'terminator-ru') return trimmed(config.ELEVENLABS_TERMINATOR_VOICE_RU);
+  if (preset === 'terminator-en') return trimmed(config.ELEVENLABS_TERMINATOR_VOICE_EN);
+  return undefined;
+}
+
 export async function dubVideoWithElevenLabs(
   sourceAudioPath: string,
   targetLanguage: string,
-  sourceLanguage?: string
+  sourceLanguage?: string,
+  voiceIdOverride?: string
 ): Promise<string> {
   const apiKey = ensureApiKey();
 
@@ -48,7 +57,7 @@ export async function dubVideoWithElevenLabs(
     throw new Error(`Source audio file not found: ${absoluteSourcePath}`);
   }
 
-  logger.info({ sourceAudioPath: absoluteSourcePath, targetLanguage }, 'Submitting ElevenLabs dubbing job');
+  logger.info({ sourceAudioPath: absoluteSourcePath, targetLanguage, voiceIdOverride }, 'Submitting ElevenLabs dubbing job');
 
   const form = new FormData();
   form.append('mode', 'automatic');
@@ -61,6 +70,9 @@ export async function dubVideoWithElevenLabs(
   form.append('dubbing_studio', 'false');
   form.append('drop_background_audio', 'false');
   form.append('name', `Dub-${randomUUID()}`);
+  if (voiceIdOverride) {
+    form.append('voice_id', voiceIdOverride);
+  }
   form.append('file', fs.createReadStream(absoluteSourcePath));
 
   let jobId: string | undefined;

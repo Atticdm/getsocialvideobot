@@ -4,12 +4,19 @@ import { rateLimiter } from '../../core/rateLimit';
 import { makeSessionDir, safeRemove } from '../../core/fs';
 import { ensureBelowLimit } from '../../core/size';
 import { translateInstagramReel } from '../../workflows/reelTranslate';
-import { TranslationDirection, TranslationEngine, TranslationStage } from '../../types/translation';
+import {
+  TranslationDirection,
+  TranslationEngine,
+  TranslationMode,
+  TranslationOptions,
+  TranslationStage,
+} from '../../types/translation';
 import { AppError, toUserMessage } from '../../core/errors';
 import { logger } from '../../core/logger';
 import * as path from 'path';
 import { translationIntents } from '../telegraf';
 import { mainKeyboard } from '../../ui/keyboard';
+import { VoicePreset } from '../../types/voice';
 
 const stageLabels: Record<TranslationStage['name'], string> = {
   download: 'Скачиваю видео',
@@ -20,6 +27,7 @@ const stageLabels: Record<TranslationStage['name'], string> = {
   synthesize: 'Озвучиваю перевод (Hume)',
   'elevenlabs-dub': 'Озвучиваю через ElevenLabs',
   mux: 'Собираю видео с новой озвучкой',
+  'select-voice': 'Выбираю голос Терминатора',
 };
 
 function parseDirection(token?: string): TranslationDirection {
@@ -27,16 +35,61 @@ function parseDirection(token?: string): TranslationDirection {
   const normalized = token.trim().toLowerCase();
   if (normalized === 'en-ru' || normalized === 'enru' || normalized === 'en_ru') return 'en-ru';
   if (normalized === 'ru-en' || normalized === 'ruen' || normalized === 'ru_en') return 'ru-en';
+  if (normalized === 'identity-ru' || normalized === 'dubbing-ru') return 'identity-ru';
+  if (normalized === 'identity-en' || normalized === 'dubbing-en') return 'identity-en';
   if (normalized === 'auto') return 'auto';
   return 'auto';
 }
 
-function parseEngine(token?: string): TranslationEngine {
-  if (!token) return 'hume';
+function deriveMode(direction: TranslationDirection): TranslationMode {
+  return direction === 'identity-ru' || direction === 'identity-en' ? 'dubbing' : 'translate';
+}
+
+function normalizeVoicePresetToken(token?: string, direction?: TranslationDirection): VoicePreset['id'] | undefined {
+  if (!token) return undefined;
   const normalized = token.trim().toLowerCase();
-  if (normalized.startsWith('eleven')) return 'elevenlabs';
-  if (normalized.startsWith('quality') || normalized.includes('elevenlabs')) return 'elevenlabs';
-  return 'hume';
+  if (normalized === 'terminator' || normalized === 'terminator-ru') return 'terminator-ru';
+  if (normalized === 'terminator-en') return 'terminator-en';
+  if (normalized === 'terminator-auto') {
+    if (direction === 'ru-en' || direction === 'identity-en') return 'terminator-en';
+    return 'terminator-ru';
+  }
+  return undefined;
+}
+
+function parseEngineAndVoice(
+  token: string | undefined,
+  direction: TranslationDirection
+): { engine: TranslationEngine; voicePreset?: VoicePreset['id'] } {
+  const voicePreset = normalizeVoicePresetToken(token, direction);
+  if (voicePreset) {
+    return { engine: 'elevenlabs', voicePreset };
+  }
+
+  if (!token) {
+    return { engine: 'hume' };
+  }
+
+  const normalized = token.trim().toLowerCase();
+  if (normalized.startsWith('eleven') || normalized.includes('elevenlabs')) {
+    return { engine: 'elevenlabs' };
+  }
+  if (normalized === 'hume' || normalized === 'fast') {
+    return { engine: 'hume' };
+  }
+  if (normalized === 'terminator') {
+    const preset =
+      direction === 'ru-en' || direction === 'identity-en' ? 'terminator-en' : ('terminator-ru' as VoicePreset['id']);
+    return { engine: 'elevenlabs', voicePreset: preset };
+  }
+  return { engine: 'hume' };
+}
+
+function describeVoice(preset?: VoicePreset['id']): string | undefined {
+  if (!preset) return undefined;
+  if (preset === 'terminator-ru') return 'Terminator (RU)';
+  if (preset === 'terminator-en') return 'Terminator (EN)';
+  return preset;
 }
 
 export async function translateCommand(ctx: Context): Promise<void> {
@@ -57,14 +110,32 @@ export async function translateCommand(ctx: Context): Promise<void> {
   const args = messageText.split(' ').slice(1).filter(Boolean);
   const url = args[0];
   const direction = parseDirection(args[1]);
-  const engine = parseEngine(args[2]);
+  const { engine, voicePreset } = parseEngineAndVoice(args[2], direction);
+  const mode = deriveMode(direction);
 
   if (!url) {
-    await ctx.reply('Использование: /translate <ссылка на рилс> [en-ru|ru-en|auto] [hume|elevenlabs]');
+    await ctx.reply(
+      'Использование: /translate <ссылка на рилс> [en-ru|ru-en|identity-ru|identity-en|auto] [hume|elevenlabs|terminator-ru|terminator-en]'
+    );
     return;
   }
 
-  logger.info('Translate command received', { userId, username, url, direction, engine });
+  const options: TranslationOptions = {
+    direction,
+    engine,
+    mode,
+    ...(voicePreset ? { voicePreset } : {}),
+  };
+
+  logger.info('Translate command received', {
+    userId,
+    username,
+    url,
+    direction,
+    engine,
+    mode,
+    voicePreset,
+  });
 
   const status = rateLimiter.getStatus(userId);
   if (status.active >= 2) {
@@ -106,7 +177,7 @@ export async function translateCommand(ctx: Context): Promise<void> {
       const result = await translateInstagramReel(
         url,
         sessionDir,
-        { direction, engine },
+        options,
         stageObserver
       );
 
@@ -126,6 +197,10 @@ export async function translateCommand(ctx: Context): Promise<void> {
 
       if (statusMessageId) {
         await appendProgress('🎉 Готово!');
+        const voiceDescription = describeVoice(result.voicePreset);
+        if (voiceDescription) {
+          await appendProgress(`🎙 Голос: ${voiceDescription}`);
+        }
       }
     } finally {
       await safeRemove(sessionDir);

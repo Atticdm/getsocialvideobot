@@ -1,5 +1,8 @@
-export type TranslationDirection = 'auto' | 'en-ru' | 'ru-en';
+import type { VoicePreset } from './voice';
+
+export type TranslationDirection = 'auto' | 'en-ru' | 'ru-en' | 'identity-ru' | 'identity-en';
 export type TranslationEngine = 'hume' | 'elevenlabs';
+export type TranslationMode = 'translate' | 'dubbing';
 
 export interface TranslationRequest {
   url: string;
@@ -16,7 +19,8 @@ export interface TranslationStage {
     | 'translate'
     | 'synthesize'
     | 'elevenlabs-dub'
-    | 'mux';
+    | 'mux'
+    | 'select-voice';
   startedAt: number;
   completedAt?: number;
   error?: string;
@@ -28,6 +32,9 @@ export interface TranslationResult {
   translatedText: string;
   audioPath: string;
   stages: TranslationStage[];
+  mode: TranslationMode;
+  engine: TranslationEngine;
+  voicePreset?: VoicePreset['id'];
 }
 
 export type WhisperLanguage = 'en' | 'ru' | 'unknown';
@@ -41,4 +48,11 @@ export interface WhisperOutput {
 export interface TranslationConfig {
   sourceLanguage: WhisperLanguage;
   targetLanguage: WhisperLanguage;
+}
+
+export interface TranslationOptions {
+  direction: TranslationDirection;
+  engine: TranslationEngine;
+  mode: TranslationMode;
+  voicePreset?: VoicePreset['id'];
 }

@@ -19,13 +19,13 @@ import { paths } from '../core/paths';
 import { separateAudioWithLalal } from '../services/lalal';
 import {
   TranslationDirection,
-  TranslationEngine,
+  TranslationOptions,
   TranslationResult,
   TranslationStage,
   WhisperLanguage,
 } from '../types/translation';
 import type { VideoInfo } from '../providers/types';
-import { dubVideoWithElevenLabs } from '../services/elevenlabs';
+import { dubVideoWithElevenLabs, getVoiceIdForPreset } from '../services/elevenlabs';
 
 type TimelineSegment = {
   speaker: string;
@@ -45,11 +45,6 @@ type AudioAnalysis = {
   raw?: unknown;
   error?: string;
 };
-
-export interface ReelTranslationOptions {
-  direction: TranslationDirection;
-  engine: TranslationEngine;
-}
 
 function beginStage(name: TranslationStage['name'], stages: TranslationStage[]): TranslationStage {
   const stage: TranslationStage = { name, startedAt: Date.now() };
@@ -90,6 +85,8 @@ function resolveLanguages(
 ): { source: WhisperLanguage; target: WhisperLanguage } {
   if (direction === 'en-ru') return { source: 'en', target: 'ru' };
   if (direction === 'ru-en') return { source: 'ru', target: 'en' };
+  if (direction === 'identity-ru') return { source: 'ru', target: 'ru' };
+  if (direction === 'identity-en') return { source: 'en', target: 'en' };
   if (detected === 'ru') return { source: 'ru', target: 'en' };
   if (detected === 'en') return { source: 'en', target: 'ru' };
   return { source: 'unknown', target: 'ru' };
@@ -140,6 +137,10 @@ interface PipelineResult {
 
 function targetLanguageFromDirection(direction: TranslationDirection): string {
   switch (direction) {
+    case 'identity-ru':
+      return 'ru';
+    case 'identity-en':
+      return 'en';
     case 'ru-en':
       return 'en';
     case 'en-ru':
@@ -151,6 +152,10 @@ function targetLanguageFromDirection(direction: TranslationDirection): string {
 
 function sourceLanguageFromDirection(direction: TranslationDirection): string | undefined {
   switch (direction) {
+    case 'identity-ru':
+      return 'ru';
+    case 'identity-en':
+      return 'en';
     case 'ru-en':
       return 'ru';
     case 'en-ru':
@@ -164,15 +169,16 @@ async function runElevenLabsPipeline(
   originalAudioPath: string,
   sessionDir: string,
   videoInfo: VideoInfo,
-  options: ReelTranslationOptions,
+  options: TranslationOptions,
   stages: TranslationStage[],
-  observer?: (stage: TranslationStage) => void
+  observer?: (stage: TranslationStage) => void,
+  voiceIdOverride?: string
 ): Promise<PipelineResult> {
   const dubStage = beginStage('elevenlabs-dub', stages);
   try {
     const targetLang = targetLanguageFromDirection(options.direction);
     const sourceLang = sourceLanguageFromDirection(options.direction);
-    const dubbedPath = await dubVideoWithElevenLabs(originalAudioPath, targetLang, sourceLang);
+    const dubbedPath = await dubVideoWithElevenLabs(originalAudioPath, targetLang, sourceLang, voiceIdOverride);
 
     const sessionAudioPath = path.join(sessionDir, `${videoInfo.id}.elevenlabs.mp3`);
     await fs.ensureDir(path.dirname(sessionAudioPath));
@@ -203,7 +209,7 @@ async function runHumePipeline(
   downloadPath: string,
   originalAudioPath: string,
   sessionDir: string,
-  options: ReelTranslationOptions,
+  options: TranslationOptions,
   stages: TranslationStage[],
   observer?: (stage: TranslationStage) => void,
   vocalPath?: string,
@@ -304,10 +310,13 @@ async function runHumePipeline(
 
   const { source, target } = resolveLanguages(options.direction, whisperOutput.language);
 
-  const translateStage = beginStage('translate', stages);
-  const translatedText = await translateText(whisperOutput.text, source, target);
-  completeStage(translateStage);
-  await notifyObserver(observer, translateStage);
+  let translatedText = whisperOutput.text;
+  if (options.mode !== 'dubbing') {
+    const translateStage = beginStage('translate', stages);
+    translatedText = await translateText(whisperOutput.text, source, target);
+    completeStage(translateStage);
+    await notifyObserver(observer, translateStage);
+  }
 
   const synthStage = beginStage('synthesize', stages);
   const audioParts: string[] = [];
@@ -479,7 +488,7 @@ async function runHumePipeline(
 export async function translateInstagramReel(
   url: string,
   sessionDir: string,
-  options: ReelTranslationOptions,
+  options: TranslationOptions,
   observer?: (stage: TranslationStage) => void
 ): Promise<TranslationResult> {
   const stages: TranslationStage[] = [];
@@ -539,9 +548,38 @@ export async function translateInstagramReel(
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Не удалось разделить аудио дорожку', { cause: error });
   }
 
+  let voiceIdOverride: string | undefined;
+  if (options.voicePreset) {
+    const voiceStage = beginStage('select-voice', stages);
+    try {
+      voiceIdOverride = getVoiceIdForPreset(options.voicePreset);
+      if (!voiceIdOverride) {
+        throw new AppError(
+          ERROR_CODES.ERR_INTERNAL,
+          `Указанный голос недоступен. Проверьте переменные ELEVENLABS_TERMINATOR_VOICE_RU/ELEVENLABS_TERMINATOR_VOICE_EN.`,
+          { preset: options.voicePreset }
+        );
+      }
+      completeStage(voiceStage);
+      await notifyObserver(observer, voiceStage);
+    } catch (error) {
+      failStage(voiceStage, error);
+      await notifyObserver(observer, voiceStage);
+      throw error;
+    }
+  }
+
   let pipelineResult: PipelineResult;
   if (options.engine === 'elevenlabs') {
-    pipelineResult = await runElevenLabsPipeline(originalAudioPath, sessionDir, videoInfo, options, stages, observer);
+    pipelineResult = await runElevenLabsPipeline(
+      originalAudioPath,
+      sessionDir,
+      videoInfo,
+      options,
+      stages,
+      observer,
+      voiceIdOverride
+    );
   } else {
     pipelineResult = await runHumePipeline(
       downloadPath,
@@ -561,11 +599,19 @@ export async function translateInstagramReel(
   completeStage(muxStage);
   await notifyObserver(observer, muxStage);
 
-  return {
+  const result: TranslationResult = {
     videoPath: outputVideoPath,
     translatedText: pipelineResult.translatedText,
     audioPath: pipelineResult.audioPath,
     stages,
     transcriptPath: pipelineResult.transcriptPath,
+    engine: options.engine,
+    mode: options.mode,
   };
+
+  if (options.voicePreset) {
+    result.voicePreset = options.voicePreset;
+  }
+
+  return result;
 }
