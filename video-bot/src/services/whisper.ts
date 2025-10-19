@@ -39,10 +39,21 @@ export async function transcribeWithWhisper(audioPath: string): Promise<WhisperO
     const language = typeof data.language === 'string' ? data.language.toLowerCase() : 'unknown';
     const mappedLanguage = language.startsWith('en') ? 'en' : language.startsWith('ru') ? 'ru' : 'unknown';
 
+    const segments = Array.isArray(data.segments)
+      ? data.segments.map((segment: any) => ({
+          id: Number(segment?.id ?? 0),
+          seek: Number(segment?.seek ?? 0),
+          start: Number(segment?.start ?? 0),
+          end: Number(segment?.end ?? 0),
+          text: typeof segment?.text === 'string' ? segment.text : '',
+        }))
+      : undefined;
+
     return {
       text: data.text || '',
       language: mappedLanguage,
       detectedLanguageConfidence: data.language_confidence,
+      segments,
     };
   } catch (error) {
     if (isAxiosError(error)) {

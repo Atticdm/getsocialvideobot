@@ -22,6 +22,7 @@ export const ERROR_CODES = {
   ERR_TRANSCRIPTION_FAILED: 'ERR_TRANSCRIPTION_FAILED',
   ERR_TRANSLATION_FAILED: 'ERR_TRANSLATION_FAILED',
   ERR_TTS_FAILED: 'ERR_TTS_FAILED',
+  ERR_TTS_RATE_LIMIT: 'ERR_TTS_RATE_LIMIT',
 } as const;
 
 export type ErrorCode = typeof ERROR_CODES[keyof typeof ERROR_CODES];
@@ -39,6 +40,7 @@ export function toUserMessage(error: AppError): string {
     [ERROR_CODES.ERR_TRANSCRIPTION_FAILED]: '❌ Не удалось распознать речь. Попробуйте ещё раз позже.',
     [ERROR_CODES.ERR_TRANSLATION_FAILED]: '❌ Не удалось выполнить перевод текста. Попробуйте позже.',
     [ERROR_CODES.ERR_TTS_FAILED]: '❌ Не удалось озвучить текст. Попробуйте позже.',
+    [ERROR_CODES.ERR_TTS_RATE_LIMIT]: '❌ ElevenLabs вернул лимит. Повторите позже.',
   };
 
   return `${messages[error.code as ErrorCode] || 'Unknown error'} (${error.code})`;

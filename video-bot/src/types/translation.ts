@@ -20,10 +20,12 @@ export interface TranslationStage {
     | 'synthesize'
     | 'elevenlabs-dub'
     | 'mux'
-    | 'select-voice';
+    | 'select-voice'
+    | 'tts-queue';
   startedAt: number;
   completedAt?: number;
   error?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface TranslationResult {
@@ -43,6 +45,13 @@ export interface WhisperOutput {
   text: string;
   language: WhisperLanguage;
   detectedLanguageConfidence?: number;
+  segments?: Array<{
+    id: number;
+    seek: number;
+    start: number;
+    end: number;
+    text: string;
+  }>;
 }
 
 export interface TranslationConfig {

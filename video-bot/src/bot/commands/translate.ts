@@ -28,6 +28,7 @@ const stageLabels: Record<TranslationStage['name'], string> = {
   'elevenlabs-dub': 'Озвучиваю через ElevenLabs (dubbing)',
   mux: 'Собираю видео с новой озвучкой',
   'select-voice': 'Выбираю голос ElevenLabs',
+  'tts-queue': '⏳ Terminator TTS',
 };
 
 function parseDirection(token?: string): TranslationDirection {
@@ -169,9 +170,12 @@ export async function translateCommand(ctx: Context): Promise<void> {
 
     try {
       const stageObserver = async (stage: TranslationStage) => {
-        const label = stageLabels[stage.name] || stage.name;
-        const icon = stage.error ? '❌' : '✅';
-        await appendProgress(`${icon} ${label}`);
+        const labelBase = stageLabels[stage.name] || stage.name;
+        const suffix = stage.name === 'tts-queue' && stage.meta && typeof stage.meta['requests'] !== 'undefined'
+          ? ` (${stage.meta['requests']})`
+          : '';
+        const icon = stage.name === 'tts-queue' ? '⏳' : stage.error ? '❌' : '✅';
+        await appendProgress(`${icon} ${labelBase}${suffix}`);
       };
 
       const result = await translateInstagramReel(

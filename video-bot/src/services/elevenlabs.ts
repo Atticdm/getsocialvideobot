@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { isAxiosError } from 'axios';
 import FormData from 'form-data';
 import * as fs from 'fs-extra';
 import * as path from 'path';
@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { config } from '../core/config';
 import { logger } from '../core/logger';
 import type { VoicePreset } from '../types/voice';
+import { AppError, ERROR_CODES } from '../core/errors';
 
 const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io/v1';
 const POLL_INTERVAL_MS = 5000;
@@ -189,6 +190,19 @@ export async function synthesizeWithElevenLabsTTS(
     return outputPath;
   } catch (error) {
     logger.error({ error, voiceId }, 'Failed to synthesize ElevenLabs TTS audio');
-    throw error;
+    if (isAxiosError(error)) {
+      const status = error.response?.status;
+      const dataPreview = typeof error.response?.data === 'string'
+        ? error.response.data.slice(0, 1000)
+        : error.response?.data
+        ? JSON.stringify(error.response.data).slice(0, 1000)
+        : undefined;
+      const code = status === 429 ? ERROR_CODES.ERR_TTS_RATE_LIMIT : ERROR_CODES.ERR_TTS_FAILED;
+      throw new AppError(code, 'ElevenLabs TTS request failed', { status, data: dataPreview });
+    }
+
+    throw new AppError(ERROR_CODES.ERR_TTS_FAILED, 'ElevenLabs TTS request failed', {
+      cause: error instanceof Error ? error.message : String(error),
+    });
   }
 }
