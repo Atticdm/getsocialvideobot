@@ -16,9 +16,9 @@ import {
   modeChoiceKeyboard,
   mainKeyboard,
   translationKeyboard,
-  removeKeyboard,
   voiceChoiceKeyboard,
   dubbingLanguageKeyboard,
+  linkPromptKeyboard,
 } from '../ui/keyboard';
 import { getVoiceIdForPreset } from '../services/elevenlabs';
 import { setupInlineHandlers } from './inline';
@@ -28,9 +28,22 @@ type EntryPreference = 'standard' | 'voice';
 type TranslationIntent =
   | { stage: 'direction'; preference: EntryPreference }
   | { stage: 'dubbing-language'; preference: EntryPreference }
-  | { stage: 'mode'; direction: TranslationDirection; mode: TranslationMode }
-  | { stage: 'voice'; direction: TranslationDirection; mode: TranslationMode; engine: TranslationEngine }
-  | { stage: 'ready'; direction: TranslationDirection; mode: TranslationMode; engine: TranslationEngine; voicePreset?: VoicePreset['id'] };
+  | { stage: 'mode'; direction: TranslationDirection; mode: TranslationMode; preference: EntryPreference }
+  | {
+      stage: 'voice';
+      direction: TranslationDirection;
+      mode: TranslationMode;
+      engine: TranslationEngine;
+      preference: EntryPreference;
+    }
+  | {
+      stage: 'ready';
+      direction: TranslationDirection;
+      mode: TranslationMode;
+      engine: TranslationEngine;
+      voicePreset?: VoicePreset['id'];
+      preference: EntryPreference;
+    };
 
 export const bot = new Telegraf(config.BOT_TOKEN!);
 
@@ -111,8 +124,9 @@ export async function setupBot(): Promise<void> {
       return;
     }
 
+    const preference = intent.preference;
     const mode: TranslationMode = direction.startsWith('identity') ? 'dubbing' : 'translate';
-    translationIntents.set(userId, { stage: 'mode', direction, mode });
+    translationIntents.set(userId, { stage: 'mode', direction, mode, preference });
 
     if (mode === 'translate') {
       const directionLabel =
@@ -185,7 +199,7 @@ export async function setupBot(): Promise<void> {
       return;
     }
 
-    const { direction, mode } = intent;
+    const { direction, mode, preference } = intent;
 
     if (choice === 'hume') {
       if (mode === 'dubbing') {
@@ -194,23 +208,23 @@ export async function setupBot(): Promise<void> {
         });
         return;
       }
-      translationIntents.set(userId, { stage: 'ready', direction, mode, engine: 'hume' });
+      translationIntents.set(userId, { stage: 'ready', direction, mode, engine: 'hume', preference });
       await ctx.reply('Отлично! Пришлите ссылку на Instagram Reel для перевода.', {
-        reply_markup: removeKeyboard.reply_markup,
+        reply_markup: linkPromptKeyboard.reply_markup,
       });
       return;
     }
 
     if (choice === 'elevenlabs') {
-      translationIntents.set(userId, { stage: 'ready', direction, mode, engine: 'elevenlabs' });
+      translationIntents.set(userId, { stage: 'ready', direction, mode, engine: 'elevenlabs', preference });
       await ctx.reply('Отлично! Пришлите ссылку на Instagram Reel для обработки.', {
-        reply_markup: removeKeyboard.reply_markup,
+        reply_markup: linkPromptKeyboard.reply_markup,
       });
       return;
     }
 
     if (choice === 'terminator') {
-      translationIntents.set(userId, { stage: 'voice', direction, mode: 'voice', engine: 'elevenlabs' });
+      translationIntents.set(userId, { stage: 'voice', direction, mode: 'voice', engine: 'elevenlabs', preference });
       const voiceLanguage =
         direction === 'en-ru' || direction === 'identity-ru'
           ? 'ru'
@@ -265,17 +279,18 @@ export async function setupBot(): Promise<void> {
       mode: intent.mode,
       engine: intent.engine,
       voicePreset: preset,
+      preference: intent.preference,
     });
 
     await ctx.reply('Голос выбран! Пришлите ссылку на ролик для озвучки.', {
-      reply_markup: removeKeyboard.reply_markup,
+      reply_markup: linkPromptKeyboard.reply_markup,
     });
   };
 
   bot.hears('🤖 Terminator (RU)', (ctx) => registerVoicePreset(ctx, 'terminator-ru'));
   bot.hears('🤖 Terminator (EN)', (ctx) => registerVoicePreset(ctx, 'terminator-en'));
 
-  bot.hears('⬅️ Back', async (ctx) => {
+  const cancelFlow = async (ctx: Context) => {
     const userId = ctx.from?.id;
     if (!userId) {
       await ctx.reply('Не удалось определить пользователя.');
@@ -285,11 +300,108 @@ export async function setupBot(): Promise<void> {
     await ctx.reply('Режим перевода отключён.', {
       reply_markup: mainKeyboard.reply_markup,
     });
+  };
+
+  bot.command('cancel', cancelFlow);
+  bot.hears('Отмена', cancelFlow);
+
+  bot.hears('⬅️ Back', async (ctx) => {
+    const userId = ctx.from?.id;
+    if (!userId) {
+      await ctx.reply('Не удалось определить пользователя.');
+      return;
+    }
+    const intent = translationIntents.get(userId);
+    if (!intent) {
+      await ctx.reply('Возвращаюсь в главное меню.', {
+        reply_markup: mainKeyboard.reply_markup,
+      });
+      return;
+    }
+
+    switch (intent.stage) {
+      case 'ready': {
+        if (intent.mode === 'voice') {
+          if (intent.voicePreset) {
+            const voiceLanguage =
+              intent.direction === 'en-ru' || intent.direction === 'identity-ru'
+                ? 'ru'
+                : intent.direction === 'ru-en' || intent.direction === 'identity-en'
+                ? 'en'
+                : 'ru';
+            translationIntents.set(userId, {
+              stage: 'voice',
+              direction: intent.direction,
+              mode: intent.mode,
+              engine: intent.engine,
+              preference: intent.preference,
+            });
+            await ctx.reply('Выберите голос для озвучки:', {
+              reply_markup: voiceChoiceKeyboard(voiceLanguage).reply_markup,
+            });
+            return;
+          }
+        }
+
+        translationIntents.set(userId, {
+          stage: 'mode',
+          direction: intent.direction,
+          mode: intent.mode,
+          preference: intent.preference,
+        });
+        await ctx.reply('Выберите тип обработки:', {
+          reply_markup: modeChoiceKeyboard.reply_markup,
+        });
+        return;
+      }
+      case 'voice': {
+        translationIntents.set(userId, {
+          stage: 'mode',
+          direction: intent.direction,
+          mode: intent.mode,
+          preference: intent.preference,
+        });
+        await ctx.reply('Выберите тип обработки:', {
+          reply_markup: modeChoiceKeyboard.reply_markup,
+        });
+        return;
+      }
+      case 'mode': {
+        if (intent.direction === 'identity-ru' || intent.direction === 'identity-en') {
+          translationIntents.set(userId, { stage: 'dubbing-language', preference: intent.preference });
+          await ctx.reply('Выберите язык для переозвучки:', {
+            reply_markup: dubbingLanguageKeyboard.reply_markup,
+          });
+        } else {
+          translationIntents.set(userId, { stage: 'direction', preference: intent.preference });
+          await ctx.reply('Выберите направление перевода:', {
+            reply_markup: translationKeyboard.reply_markup,
+          });
+        }
+        return;
+      }
+      case 'dubbing-language': {
+        translationIntents.set(userId, { stage: 'direction', preference: intent.preference });
+        await ctx.reply('Выберите направление перевода:', {
+          reply_markup: translationKeyboard.reply_markup,
+        });
+        return;
+      }
+      case 'direction':
+      default: {
+        await cancelFlow(ctx);
+        return;
+      }
+    }
   });
 
   bot.on('text', async (ctx) => {
     const text = ctx.message?.text;
     const userId = ctx.from?.id;
+
+    if (text && text.startsWith('/')) {
+      return;
+    }
 
     if (text && text.startsWith('http')) {
       if (userId && translationIntents.has(userId)) {
@@ -369,8 +481,8 @@ export async function setupBot(): Promise<void> {
         return;
       }
       if (intent.stage === 'ready') {
-        await ctx.reply('Пожалуйста, пришлите ссылку на Instagram Reel для перевода.', {
-          reply_markup: removeKeyboard.reply_markup,
+        await ctx.reply('Пожалуйста, пришлите ссылку на Instagram Reel или нажмите Отмена.', {
+          reply_markup: linkPromptKeyboard.reply_markup,
         });
         return;
       }

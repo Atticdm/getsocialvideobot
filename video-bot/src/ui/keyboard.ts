@@ -33,3 +33,7 @@ export function voiceChoiceKeyboard(language: 'ru' | 'en') {
 }
 
 export const removeKeyboard = Markup.removeKeyboard();
+
+export const linkPromptKeyboard = Markup.keyboard([
+  ['⬅️ Back', 'Отмена']
+]).resize();
