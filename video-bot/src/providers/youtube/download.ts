@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { run } from '../../core/exec';
 import { logger } from '../../core/logger';
-import { ERROR_CODES, AppError } from '../../core/errors';
+import { ERROR_CODES, AppError, ErrorCode } from '../../core/errors';
 import { DownloadResult, VideoMetadata } from '../types';
 import { config } from '../../core/config';
 import { findDownloadedFile, parseVideoInfoFromPath } from '../utils';
@@ -11,6 +11,13 @@ import { findDownloadedFile, parseVideoInfoFromPath } from '../utils';
 type YouTubeArgsOptions = {
   cookiesPath?: string;
   extra?: string[];
+};
+
+type YouTubeDownloadStrategy = {
+  name: string;
+  description: string;
+  options: YouTubeArgsOptions;
+  retryable?: boolean;
 };
 
 async function prepareYouTubeCookies(outDir: string): Promise<string | undefined> {
@@ -53,6 +60,77 @@ function buildYouTubeArgs(outDir: string, options?: YouTubeArgsOptions): string[
   return args;
 }
 
+const RETRYABLE_ERROR_CODES = new Set<ErrorCode>([
+  ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED,
+  ERROR_CODES.ERR_GEO_BLOCKED,
+]);
+
+function buildYouTubeStrategies(cookiesPath?: string): YouTubeDownloadStrategy[] {
+  const strategies: YouTubeDownloadStrategy[] = [];
+
+  if (cookiesPath) {
+    strategies.push({
+      name: 'default-with-cookies',
+      description: 'Standard yt-dlp call with cookies',
+      options: { cookiesPath },
+      retryable: true,
+    });
+  }
+
+  strategies.push(
+    {
+      name: 'default-open',
+      description: 'Standard yt-dlp call without cookies',
+      options: {},
+      retryable: true,
+    },
+    {
+      name: 'android-client',
+      description: 'Android player client without cookies',
+      options: {
+        extra: ['--extractor-args', 'youtube:player_client=android,player_skip=configs'],
+      },
+      retryable: true,
+    },
+    {
+      name: 'ios-client',
+      description: 'iOS player client without cookies',
+      options: {
+        extra: ['--extractor-args', 'youtube:player_client=ios'],
+      },
+      retryable: true,
+    },
+    {
+      name: 'tv-relaxed',
+      description: 'TV HTML5 client with relaxed media flags',
+      options: {
+        extra: [
+          '--extractor-args',
+          'youtube:player_client=tvhtml5',
+          '--skip-dash-manifest',
+          '--no-check-certificates',
+        ],
+      },
+      retryable: true,
+    },
+    {
+      name: 'android-relaxed',
+      description: 'Android testsuite client with relaxed flags',
+      options: {
+        extra: [
+          '--extractor-args',
+          'youtube:player_client=android_testsuite,player_skip=configs',
+          '--skip-dash-manifest',
+          '--no-check-certificates',
+        ],
+      },
+      retryable: true,
+    }
+  );
+
+  return strategies;
+}
+
 function mapYtDlpError(stderr: string): string {
   const s = (stderr || '').toLowerCase();
   if (s.includes('login') || s.includes('private') || s.includes('sign in') || s.includes('age') || s.includes('restricted') || s.includes('members-only')) return ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED;
@@ -66,37 +144,89 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
   logger.info('Starting YouTube video download', { url, outDir });
 
   const cookiesPath = await prepareYouTubeCookies(outDir);
-  const args = buildYouTubeArgs(outDir, cookiesPath ? { cookiesPath } : undefined);
-  args.push(url);
+  const strategies = buildYouTubeStrategies(cookiesPath);
 
-  try {
-    logger.info('Executing optimized yt-dlp command for YouTube');
-    if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (youtube)', { args });
+  let lastError: AppError | null = null;
 
-    const result = await run('yt-dlp', args, { timeout: 900000 }); // Keep generous timeout for edge cases requiring recode
+  for (let i = 0; i < strategies.length; i++) {
+    const strategy = strategies[i]!;
+    const args = buildYouTubeArgs(outDir, strategy.options);
+    args.push(url);
 
-    if (result.code === 0) {
-      const filePath = await findDownloadedFile(outDir);
-      if (!filePath) {
-        throw new AppError(ERROR_CODES.ERR_FILE_NOT_FOUND, 'Downloaded file not found after yt-dlp success', { url, outDir, stderr: result.stderr });
+    logger.info(
+      { url, attempt: strategy.name, description: strategy.description },
+      'Executing yt-dlp strategy for YouTube'
+    );
+    if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (youtube)', { attempt: strategy.name, args });
+
+    try {
+      const result = await run('yt-dlp', args, { timeout: 900000 });
+
+      if (result.code === 0) {
+        const filePath = await findDownloadedFile(outDir);
+        if (!filePath) {
+          throw new AppError(ERROR_CODES.ERR_FILE_NOT_FOUND, 'Downloaded file not found after yt-dlp success', {
+            url,
+            outDir,
+            stderr: result.stderr,
+          });
+        }
+
+        const stats = await fs.stat(filePath);
+        logger.info({ filePath, size: stats.size, attempt: strategy.name }, 'Downloaded file stats');
+
+        const info = parseVideoInfoFromPath(filePath, url);
+        logger.info('YouTube video downloaded and processed successfully', { url, filePath, info });
+        return { filePath, videoInfo: info };
       }
 
-      const stats = await fs.stat(filePath);
-      logger.info({ filePath, size: stats.size }, 'Downloaded file stats');
-      
-      const info = parseVideoInfoFromPath(filePath, url);
-      logger.info('YouTube video downloaded and processed successfully', { url, filePath, info });
-      return { filePath, videoInfo: info };
+      logger.error('yt-dlp command failed (youtube)', {
+        url,
+        attempt: strategy.name,
+        code: result.code,
+        stderrPreview: (result.stderr || '').slice(0, 1200),
+      });
+      throw new AppError(mapYtDlpError(result.stderr), 'yt-dlp download failed', {
+        url,
+        stderr: result.stderr,
+        code: result.code,
+        attempt: strategy.name,
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        lastError = error;
+        const shouldRetry =
+          strategy.retryable &&
+          RETRYABLE_ERROR_CODES.has(error.code as ErrorCode) &&
+          i < strategies.length - 1;
+
+        if (shouldRetry) {
+          logger.warn(
+            { url, attempt: strategy.name, errorCode: error.code },
+            'YouTube strategy failed, trying next fallback'
+          );
+          continue;
+        }
+        throw error;
+      }
+
+      logger.error('Unexpected error during YouTube download attempt', {
+        error,
+        url,
+        outDir,
+        attempt: strategy.name,
+      });
+      throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Unexpected error during download', {
+        url,
+        originalError: error,
+        attempt: strategy.name,
+      });
     }
-
-    logger.error('yt-dlp command failed (youtube)', { url, code: result.code, stderrPreview: (result.stderr||'').slice(0,1200) });
-    throw new AppError(mapYtDlpError(result.stderr), 'yt-dlp download failed', { url, stderr: result.stderr, code: result.code });
-
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    logger.error('Unexpected error during YouTube download', { error, url, outDir });
-    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Unexpected error during download', { url, originalError: error });
   }
+
+  logger.error('All YouTube download strategies failed', { url });
+  if (lastError) throw lastError;
+  throw new AppError(ERROR_CODES.ERR_INTERNAL, 'YouTube download failed with no strategy result', { url });
 }
 
 export async function fetchYouTubeMetadata(url: string): Promise<VideoMetadata> {
