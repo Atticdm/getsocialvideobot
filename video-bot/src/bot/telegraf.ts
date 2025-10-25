@@ -11,38 +11,39 @@ import { downloadCommand } from './commands/download';
 import { diagCommand } from './commands/diag';
 import { translateCommand } from './commands/translate';
 import { TranslationDirection, TranslationEngine, TranslationMode } from '../types/translation';
-import type { VoicePreset } from '../types/voice';
 import {
-  modeChoiceKeyboard,
+  translateEngineKeyboard,
   mainKeyboard,
-  translationKeyboard,
+  translateDirectionKeyboard,
   voiceChoiceKeyboard,
-  dubbingLanguageKeyboard,
+  voiceLanguageKeyboard,
   linkPromptKeyboard,
 } from '../ui/keyboard';
 import { getVoiceIdForPreset } from '../services/elevenlabs';
 import { setupInlineHandlers } from './inline';
-
-type EntryPreference = 'standard' | 'voice';
+import type { VoiceLanguage, VoicePreset } from '../types/voice';
 
 type TranslationIntent =
-  | { stage: 'direction'; preference: EntryPreference }
-  | { stage: 'dubbing-language'; preference: EntryPreference }
-  | { stage: 'mode'; direction: TranslationDirection; mode: TranslationMode; preference: EntryPreference }
+  | { flow: 'translate'; stage: 'direction' }
+  | { flow: 'translate'; stage: 'engine'; direction: TranslationDirection }
   | {
-      stage: 'voice';
-      direction: TranslationDirection;
-      mode: TranslationMode;
-      engine: TranslationEngine;
-      preference: EntryPreference;
-    }
-  | {
+      flow: 'translate';
       stage: 'ready';
       direction: TranslationDirection;
       mode: TranslationMode;
       engine: TranslationEngine;
       voicePreset?: VoicePreset['id'];
-      preference: EntryPreference;
+    }
+  | { flow: 'voice'; stage: 'language' }
+  | { flow: 'voice'; stage: 'voice'; language: VoiceLanguage }
+  | {
+      flow: 'voice';
+      stage: 'ready';
+      direction: TranslationDirection;
+      mode: TranslationMode;
+      engine: TranslationEngine;
+      voicePreset: VoicePreset['id'];
+      language: VoiceLanguage;
     };
 
 export const bot = new Telegraf(config.BOT_TOKEN!);
@@ -106,6 +107,37 @@ export async function setupBot(): Promise<void> {
     return true;
   };
 
+
+  const startTranslateFlow = async (ctx: Context) => {
+    const userId = ctx.from?.id;
+    if (!userId) {
+      await ctx.reply('Не удалось определить пользователя.');
+      return;
+    }
+    const enabled = await ensureTranslationEnabled(ctx);
+    if (!enabled) return;
+
+    translationIntents.set(userId, { flow: 'translate', stage: 'direction' });
+    await ctx.reply('Выберите направление перевода:', {
+      reply_markup: translateDirectionKeyboard.reply_markup,
+    });
+  };
+
+  const startVoiceFlow = async (ctx: Context) => {
+    const userId = ctx.from?.id;
+    if (!userId) {
+      await ctx.reply('Не удалось определить пользователя.');
+      return;
+    }
+    const enabled = await ensureTranslationEnabled(ctx);
+    if (!enabled) return;
+
+    translationIntents.set(userId, { flow: 'voice', stage: 'language' });
+    await ctx.reply('Выберите язык оригинального ролика:', {
+      reply_markup: voiceLanguageKeyboard.reply_markup,
+    });
+  };
+
   const registerTranslationDirection = async (ctx: Context, direction: TranslationDirection) => {
     const userId = ctx.from?.id;
     if (!userId) {
@@ -117,74 +149,20 @@ export async function setupBot(): Promise<void> {
     if (!enabled) return;
 
     const intent = translationIntents.get(userId);
-    if (!intent || (intent.stage !== 'direction' && intent.stage !== 'dubbing-language')) {
+    if (!intent || intent.flow !== 'translate' || intent.stage !== 'direction') {
       await ctx.reply('Сначала выберите режим перевода.', {
         reply_markup: mainKeyboard.reply_markup,
       });
       return;
     }
 
-    const preference = intent.preference;
-    const mode: TranslationMode = direction.startsWith('identity') ? 'dubbing' : 'translate';
-    translationIntents.set(userId, { stage: 'mode', direction, mode, preference });
-
-    if (mode === 'translate') {
-      const directionLabel =
-        direction === 'en-ru'
-          ? 'английского на русский'
-          : direction === 'ru-en'
-          ? 'русского на английский'
-          : 'выбранного направления';
-      await ctx.reply(`Отличный выбор! Теперь укажите тип перевода для ${directionLabel}.`, {
-        reply_markup: modeChoiceKeyboard.reply_markup,
-      });
-    } else {
-      await ctx.reply('Выберите тип озвучки для переозвучивания ролика:', {
-        reply_markup: modeChoiceKeyboard.reply_markup,
-      });
-    }
-  };
-
-  const startDirectionSelection = async (ctx: Context, preference: EntryPreference) => {
-    const userId = ctx.from?.id;
-    if (!userId) {
-      await ctx.reply('Не удалось определить пользователя.');
-      return;
-    }
-    const enabled = await ensureTranslationEnabled(ctx);
-    if (!enabled) return;
-
-    translationIntents.set(userId, { stage: 'direction', preference });
-    await ctx.reply('Выберите направление перевода:', {
-      reply_markup: translationKeyboard.reply_markup,
+    translationIntents.set(userId, { flow: 'translate', stage: 'engine', direction });
+    await ctx.reply('Выберите тип перевода:', {
+      reply_markup: translateEngineKeyboard.reply_markup,
     });
   };
 
-  bot.hears('🌐 Translate', async (ctx) => startDirectionSelection(ctx, 'standard'));
-  bot.hears('🎙 Перевод с озвучкой', async (ctx) => startDirectionSelection(ctx, 'voice'));
-
-  bot.hears('🇬🇧 → 🇷🇺', (ctx) => registerTranslationDirection(ctx, 'en-ru'));
-  bot.hears('🇷🇺 → 🇬🇧', (ctx) => registerTranslationDirection(ctx, 'ru-en'));
-
-  bot.hears('🎬 Переозвучить', async (ctx) => {
-    const userId = ctx.from?.id;
-    if (!userId) {
-      await ctx.reply('Не удалось определить пользователя.');
-      return;
-    }
-    const enabled = await ensureTranslationEnabled(ctx);
-    if (!enabled) return;
-
-    translationIntents.set(userId, { stage: 'dubbing-language', preference: 'voice' });
-    await ctx.reply('Выберите язык для переозвучки:', {
-      reply_markup: dubbingLanguageKeyboard.reply_markup,
-    });
-  });
-
-  bot.hears('🇷🇺 Озвучить русским голосом', (ctx) => registerTranslationDirection(ctx, 'identity-ru'));
-  bot.hears('🇬🇧 Озвучить английским голосом', (ctx) => registerTranslationDirection(ctx, 'identity-en'));
-
-  const registerModeChoice = async (ctx: Context, choice: 'hume' | 'elevenlabs' | 'terminator') => {
+  const registerTranslateEngine = async (ctx: Context, choice: 'hume' | 'elevenlabs' | 'terminator') => {
     const userId = ctx.from?.id;
     if (!userId) {
       await ctx.reply('Не удалось определить пользователя. Попробуйте ещё раз.');
@@ -192,55 +170,78 @@ export async function setupBot(): Promise<void> {
     }
 
     const intent = translationIntents.get(userId);
-    if (!intent || intent.stage !== 'mode') {
+    if (!intent || intent.flow !== 'translate' || intent.stage !== 'engine') {
       await ctx.reply('Сначала выберите направление перевода.', {
-        reply_markup: translationKeyboard.reply_markup,
+        reply_markup: translateDirectionKeyboard.reply_markup,
       });
       return;
     }
 
-    const { direction, mode, preference } = intent;
-
+    const direction = intent.direction;
     if (choice === 'hume') {
-      if (mode === 'dubbing') {
-        await ctx.reply('Режим Hume не поддерживает переозвучивание без перевода. Выберите ElevenLabs.', {
-          reply_markup: modeChoiceKeyboard.reply_markup,
-        });
-        return;
-      }
-      translationIntents.set(userId, { stage: 'ready', direction, mode, engine: 'hume', preference });
-      await ctx.reply('Отлично! Пришлите ссылку на Instagram Reel для перевода.', {
+      translationIntents.set(userId, {
+        flow: 'translate',
+        stage: 'ready',
+        direction,
+        mode: 'translate',
+        engine: 'hume',
+      });
+      await ctx.reply('Отличный выбор! Пришлите ссылку на ролик.', {
         reply_markup: linkPromptKeyboard.reply_markup,
       });
       return;
     }
 
     if (choice === 'elevenlabs') {
-      translationIntents.set(userId, { stage: 'ready', direction, mode, engine: 'elevenlabs', preference });
-      await ctx.reply('Отлично! Пришлите ссылку на Instagram Reel для обработки.', {
+      translationIntents.set(userId, {
+        flow: 'translate',
+        stage: 'ready',
+        direction,
+        mode: 'translate',
+        engine: 'elevenlabs',
+      });
+      await ctx.reply('Отлично! Пришлите ссылку на ролик.', {
         reply_markup: linkPromptKeyboard.reply_markup,
       });
       return;
     }
 
     if (choice === 'terminator') {
-      translationIntents.set(userId, { stage: 'voice', direction, mode: 'voice', engine: 'elevenlabs', preference });
-      const voiceLanguage =
-        direction === 'en-ru' || direction === 'identity-ru'
-          ? 'ru'
-          : direction === 'ru-en' || direction === 'identity-en'
-          ? 'en'
-          : 'ru';
-      await ctx.reply('Выберите голос для озвучки:', {
-        reply_markup: voiceChoiceKeyboard(voiceLanguage).reply_markup,
+      const voicePreset: VoicePreset['id'] = direction === 'en-ru' ? 'terminator-ru' : 'terminator-en';
+      translationIntents.set(userId, {
+        flow: 'translate',
+        stage: 'ready',
+        direction,
+        mode: 'voice',
+        engine: 'elevenlabs',
+        voicePreset,
+      });
+      await ctx.reply('Терминатор готов! Пришлите ссылку на ролик.', {
+        reply_markup: linkPromptKeyboard.reply_markup,
       });
       return;
     }
   };
 
-  bot.hears('🚀 Быстрый (Hume)', (ctx) => registerModeChoice(ctx, 'hume'));
-  bot.hears('💎 Качественный (ElevenLabs)', (ctx) => registerModeChoice(ctx, 'elevenlabs'));
-  bot.hears('🎯 Голос Терминатора', (ctx) => registerModeChoice(ctx, 'terminator'));
+  const registerVoiceLanguage = async (ctx: Context, language: VoiceLanguage) => {
+    const userId = ctx.from?.id;
+    if (!userId) {
+      await ctx.reply('Не удалось определить пользователя. Попробуйте ещё раз.');
+      return;
+    }
+    const intent = translationIntents.get(userId);
+    if (!intent || intent.flow !== 'voice' || intent.stage !== 'language') {
+      await ctx.reply('Сначала выберите режим озвучки.', {
+        reply_markup: mainKeyboard.reply_markup,
+      });
+      return;
+    }
+
+    translationIntents.set(userId, { flow: 'voice', stage: 'voice', language });
+    await ctx.reply('Выберите голос для озвучки:', {
+      reply_markup: voiceChoiceKeyboard(language).reply_markup,
+    });
+  };
 
   const registerVoicePreset = async (ctx: Context, preset: VoicePreset['id']) => {
     const userId = ctx.from?.id;
@@ -249,43 +250,53 @@ export async function setupBot(): Promise<void> {
       return;
     }
     const intent = translationIntents.get(userId);
-    if (!intent || intent.stage !== 'voice') {
-      await ctx.reply('Сначала выберите режим озвучки.', {
-        reply_markup: mainKeyboard.reply_markup,
+    if (!intent || intent.flow !== 'voice' || intent.stage !== 'voice') {
+      await ctx.reply('Сначала выберите язык ролика.', {
+        reply_markup: voiceLanguageKeyboard.reply_markup,
       });
       return;
     }
 
     const voiceId = getVoiceIdForPreset(preset);
     if (!voiceId) {
-      const voiceLanguage =
-        intent.direction === 'en-ru' || intent.direction === 'identity-ru'
-          ? 'ru'
-          : intent.direction === 'ru-en' || intent.direction === 'identity-en'
-          ? 'en'
-          : 'ru';
       await ctx.reply(
-        '❌ Голос сейчас недоступен. Проверьте переменные ELEVENLABS_TERMINATOR_VOICE_RU / ELEVENLABS_TERMINATOR_VOICE_EN.',
+        '❌ Голос сейчас недоступен. Проверьте переменные ELEVENLABS_TERМИNАТОР_VOICE_RU / ELEVENLABS_TERMINATOR_VOICE_EN.',
         {
-          reply_markup: voiceChoiceKeyboard(voiceLanguage).reply_markup,
+          reply_markup: voiceChoiceKeyboard(intent.language).reply_markup,
         }
       );
       return;
     }
 
+    const direction: TranslationDirection = intent.language === 'ru' ? 'identity-ru' : 'identity-en';
+
     translationIntents.set(userId, {
+      flow: 'voice',
       stage: 'ready',
-      direction: intent.direction,
-      mode: intent.mode,
-      engine: intent.engine,
+      direction,
+      mode: 'voice',
+      engine: 'elevenlabs',
       voicePreset: preset,
-      preference: intent.preference,
+      language: intent.language,
     });
 
     await ctx.reply('Голос выбран! Пришлите ссылку на ролик для озвучки.', {
       reply_markup: linkPromptKeyboard.reply_markup,
     });
   };
+
+  bot.hears('🌐 Перевести видео', startTranslateFlow);
+  bot.hears('🎙 Озвучить видео', startVoiceFlow);
+
+  bot.hears('🇬🇧 → 🇷🇺', (ctx) => registerTranslationDirection(ctx, 'en-ru'));
+  bot.hears('🇷🇺 → 🇬🇧', (ctx) => registerTranslationDirection(ctx, 'ru-en'));
+
+  bot.hears('🚀 Быстрый (Hume)', (ctx) => registerTranslateEngine(ctx, 'hume'));
+  bot.hears('💎 Качественный (ElevenLabs)', (ctx) => registerTranslateEngine(ctx, 'elevenlabs'));
+  bot.hears('🎯 Голос Терминатора', (ctx) => registerTranslateEngine(ctx, 'terminator'));
+
+  bot.hears('🇷🇺 Ролик на русском', (ctx) => registerVoiceLanguage(ctx, 'ru'));
+  bot.hears('🇬🇧 Video in English', (ctx) => registerVoiceLanguage(ctx, 'en'));
 
   bot.hears('🤖 Terminator (RU)', (ctx) => registerVoicePreset(ctx, 'terminator-ru'));
   bot.hears('🤖 Terminator (EN)', (ctx) => registerVoicePreset(ctx, 'terminator-en'));
@@ -305,7 +316,7 @@ export async function setupBot(): Promise<void> {
   bot.command('cancel', cancelFlow);
   bot.hears('Отмена', cancelFlow);
 
-  bot.hears('⬅️ Back', async (ctx) => {
+  bot.hears('⬅️ Назад', async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) {
       await ctx.reply('Не удалось определить пользователя.');
@@ -319,80 +330,45 @@ export async function setupBot(): Promise<void> {
       return;
     }
 
-    switch (intent.stage) {
-      case 'ready': {
-        if (intent.mode === 'voice') {
-          if (intent.voicePreset) {
-            const voiceLanguage =
-              intent.direction === 'en-ru' || intent.direction === 'identity-ru'
-                ? 'ru'
-                : intent.direction === 'ru-en' || intent.direction === 'identity-en'
-                ? 'en'
-                : 'ru';
-            translationIntents.set(userId, {
-              stage: 'voice',
-              direction: intent.direction,
-              mode: intent.mode,
-              engine: intent.engine,
-              preference: intent.preference,
-            });
-            await ctx.reply('Выберите голос для озвучки:', {
-              reply_markup: voiceChoiceKeyboard(voiceLanguage).reply_markup,
-            });
-            return;
-          }
-        }
-
-        translationIntents.set(userId, {
-          stage: 'mode',
-          direction: intent.direction,
-          mode: intent.mode,
-          preference: intent.preference,
-        });
-        await ctx.reply('Выберите тип обработки:', {
-          reply_markup: modeChoiceKeyboard.reply_markup,
+    if (intent.stage === 'ready') {
+      if (intent.flow === 'translate') {
+        translationIntents.set(userId, { flow: 'translate', stage: 'engine', direction: intent.direction });
+        await ctx.reply('Выберите тип перевода:', {
+          reply_markup: translateEngineKeyboard.reply_markup,
         });
         return;
       }
-      case 'voice': {
-        translationIntents.set(userId, {
-          stage: 'mode',
-          direction: intent.direction,
-          mode: intent.mode,
-          preference: intent.preference,
+      if (intent.flow === 'voice') {
+        translationIntents.set(userId, { flow: 'voice', stage: 'voice', language: intent.language });
+        await ctx.reply('Выберите голос для озвучки:', {
+          reply_markup: voiceChoiceKeyboard(intent.language).reply_markup,
         });
-        await ctx.reply('Выберите тип обработки:', {
-          reply_markup: modeChoiceKeyboard.reply_markup,
-        });
-        return;
-      }
-      case 'mode': {
-        if (intent.direction === 'identity-ru' || intent.direction === 'identity-en') {
-          translationIntents.set(userId, { stage: 'dubbing-language', preference: intent.preference });
-          await ctx.reply('Выберите язык для переозвучки:', {
-            reply_markup: dubbingLanguageKeyboard.reply_markup,
-          });
-        } else {
-          translationIntents.set(userId, { stage: 'direction', preference: intent.preference });
-          await ctx.reply('Выберите направление перевода:', {
-            reply_markup: translationKeyboard.reply_markup,
-          });
-        }
-        return;
-      }
-      case 'dubbing-language': {
-        translationIntents.set(userId, { stage: 'direction', preference: intent.preference });
-        await ctx.reply('Выберите направление перевода:', {
-          reply_markup: translationKeyboard.reply_markup,
-        });
-        return;
-      }
-      case 'direction':
-      default: {
-        await cancelFlow(ctx);
         return;
       }
     }
+
+    if (intent.stage === 'engine') {
+      translationIntents.set(userId, { flow: 'translate', stage: 'direction' });
+      await ctx.reply('Выберите направление перевода:', {
+        reply_markup: translateDirectionKeyboard.reply_markup,
+      });
+      return;
+    }
+
+    if (intent.stage === 'voice') {
+      translationIntents.set(userId, { flow: 'voice', stage: 'language' });
+      await ctx.reply('Выберите язык оригинального ролика:', {
+        reply_markup: voiceLanguageKeyboard.reply_markup,
+      });
+      return;
+    }
+
+    if (intent.stage === 'language' || intent.stage === 'direction') {
+      await cancelFlow(ctx);
+      return;
+    }
+
+    await cancelFlow(ctx);
   });
 
   bot.on('text', async (ctx) => {
@@ -414,31 +390,25 @@ export async function setupBot(): Promise<void> {
         }
         if (intent.stage === 'direction') {
           await ctx.reply('Сначала выберите направление перевода.', {
-            reply_markup: translationKeyboard.reply_markup,
+            reply_markup: translateDirectionKeyboard.reply_markup,
           });
           return;
         }
-        if (intent.stage === 'dubbing-language') {
-          await ctx.reply('Выберите язык для переозвучки:', {
-            reply_markup: dubbingLanguageKeyboard.reply_markup,
+        if (intent.stage === 'engine') {
+          await ctx.reply('Сначала выберите тип перевода.', {
+            reply_markup: translateEngineKeyboard.reply_markup,
           });
           return;
         }
-        if (intent.stage === 'mode') {
-          await ctx.reply('Выберите тип обработки:', {
-            reply_markup: modeChoiceKeyboard.reply_markup,
+        if (intent.stage === 'language') {
+          await ctx.reply('Сначала выберите язык ролика.', {
+            reply_markup: voiceLanguageKeyboard.reply_markup,
           });
           return;
         }
         if (intent.stage === 'voice') {
-          const voiceLanguage =
-            intent.direction === 'en-ru' || intent.direction === 'identity-ru'
-              ? 'ru'
-              : intent.direction === 'ru-en' || intent.direction === 'identity-en'
-              ? 'en'
-              : 'ru';
-          await ctx.reply('Выберите голос для озвучки:', {
-            reply_markup: voiceChoiceKeyboard(voiceLanguage).reply_markup,
+          await ctx.reply('Сначала выберите голос для озвучки.', {
+            reply_markup: voiceChoiceKeyboard(intent.language).reply_markup,
           });
           return;
         }
@@ -452,31 +422,25 @@ export async function setupBot(): Promise<void> {
       const intent = translationIntents.get(userId)!;
       if (intent.stage === 'direction') {
         await ctx.reply('Выберите направление перевода:', {
-          reply_markup: translationKeyboard.reply_markup,
+          reply_markup: translateDirectionKeyboard.reply_markup,
         });
         return;
       }
-      if (intent.stage === 'dubbing-language') {
-        await ctx.reply('Выберите язык для переозвучки:', {
-          reply_markup: dubbingLanguageKeyboard.reply_markup,
-        });
-        return;
-      }
-      if (intent.stage === 'mode') {
-        await ctx.reply('Выберите тип обработки:', {
-          reply_markup: modeChoiceKeyboard.reply_markup,
+      if (intent.stage === 'engine') {
+        await ctx.reply('Выберите тип перевода:', {
+          reply_markup: translateEngineKeyboard.reply_markup,
         });
         return;
       }
       if (intent.stage === 'voice') {
-        const voiceLanguage =
-          intent.direction === 'en-ru' || intent.direction === 'identity-ru'
-            ? 'ru'
-            : intent.direction === 'ru-en' || intent.direction === 'identity-en'
-            ? 'en'
-            : 'ru';
         await ctx.reply('Выберите голос для озвучки:', {
-          reply_markup: voiceChoiceKeyboard(voiceLanguage).reply_markup,
+          reply_markup: voiceChoiceKeyboard(intent.language).reply_markup,
+        });
+        return;
+      }
+      if (intent.stage === 'language') {
+        await ctx.reply('Выберите язык оригинального ролика:', {
+          reply_markup: voiceLanguageKeyboard.reply_markup,
         });
         return;
       }

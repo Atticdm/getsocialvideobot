@@ -1,39 +1,36 @@
 import { Markup } from 'telegraf';
 
-export const mainKeyboard = Markup.keyboard([['🌐 Translate', '🎙 Перевод с озвучкой']]).resize();
+export const mainKeyboard = Markup.keyboard([['🌐 Перевести видео', '🎙 Озвучить видео']]).resize();
 
-export const translationKeyboard = Markup.keyboard([
+export const translateDirectionKeyboard = Markup.keyboard([
   ['🇬🇧 → 🇷🇺', '🇷🇺 → 🇬🇧'],
-  ['🎬 Переозвучить'],
-  ['⬅️ Back']
+  ['⬅️ Назад']
 ]).resize();
 
-export const modeChoiceKeyboard = Markup.keyboard([
+export const translateEngineKeyboard = Markup.keyboard([
   ['🚀 Быстрый (Hume)', '💎 Качественный (ElevenLabs)'],
   ['🎯 Голос Терминатора'],
-  ['⬅️ Back'],
+  ['⬅️ Назад']
 ]).resize();
 
-export const dubbingLanguageKeyboard = Markup.keyboard([
-  ['🇷🇺 Озвучить русским голосом', '🇬🇧 Озвучить английским голосом'],
-  ['⬅️ Back']
+export const voiceLanguageKeyboard = Markup.keyboard([
+  ['🇷🇺 Ролик на русском', '🇬🇧 Video in English'],
+  ['⬅️ Назад']
 ]).resize();
 
 export function voiceChoiceKeyboard(language: 'ru' | 'en') {
   const rows: string[][] = [];
   if (language === 'ru') {
     rows.push(['🤖 Terminator (RU)']);
-  } else if (language === 'en') {
-    rows.push(['🤖 Terminator (EN)']);
   } else {
-    rows.push(['🤖 Terminator']);
+    rows.push(['🤖 Terminator (EN)']);
   }
-  rows.push(['⬅️ Back']);
+  rows.push(['⬅️ Назад']);
   return Markup.keyboard(rows).resize();
 }
 
 export const removeKeyboard = Markup.removeKeyboard();
 
 export const linkPromptKeyboard = Markup.keyboard([
-  ['⬅️ Back', 'Отмена']
+  ['⬅️ Назад', 'Отмена']
 ]).resize();
