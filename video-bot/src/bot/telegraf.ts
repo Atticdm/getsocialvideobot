@@ -22,6 +22,7 @@ import {
 import { getVoiceIdForPreset } from '../services/elevenlabs';
 import { setupInlineHandlers } from './inline';
 import type { VoiceLanguage, VoicePreset } from '../types/voice';
+import { getArenaDisplayName, isArenaPublishingEnabled, publishCandidateToken } from './publish';
 
 type TranslationIntent =
   | { flow: 'translate'; stage: 'direction' }
@@ -51,6 +52,7 @@ export const bot = new Telegraf(config.BOT_TOKEN!);
 let handlersRegistered = false;
 let signalsRegistered = false;
 export const translationIntents = new Map<number, TranslationIntent>();
+const arenaPublishRequests = new Set<number>();
 
 async function logToolVersions(): Promise<void> {
   try {
@@ -223,6 +225,26 @@ export async function setupBot(): Promise<void> {
     }
   };
 
+  const startArenaPublishFlow = async (ctx: Context) => {
+    if (!isArenaPublishingEnabled()) {
+      await ctx.reply('⚙️ Публикация в канал временно недоступна. Свяжитесь с администратором.');
+      return;
+    }
+    const userId = ctx.from?.id;
+    if (!userId) {
+      await ctx.reply('Не удалось определить пользователя.');
+      return;
+    }
+    arenaPublishRequests.add(userId);
+    translationIntents.delete(userId);
+    await ctx.reply(
+      `📣 Пришлите ссылку на ролик, и после скачивания я опубликую его в ${getArenaDisplayName()}.\n\nНажмите Отмена, чтобы выйти.`,
+      {
+        reply_markup: linkPromptKeyboard.reply_markup,
+      }
+    );
+  };
+
   const registerVoiceLanguage = async (ctx: Context, language: VoiceLanguage) => {
     const userId = ctx.from?.id;
     if (!userId) {
@@ -287,6 +309,8 @@ export async function setupBot(): Promise<void> {
 
   bot.hears('🌐 Перевести видео', startTranslateFlow);
   bot.hears('🎙 Озвучить видео', startVoiceFlow);
+  bot.hears('📣 Опубликовать в канал', startArenaPublishFlow);
+  bot.command('publish', startArenaPublishFlow);
 
   bot.hears('🇬🇧 → 🇷🇺', (ctx) => registerTranslationDirection(ctx, 'en-ru'));
   bot.hears('🇷🇺 → 🇬🇧', (ctx) => registerTranslationDirection(ctx, 'ru-en'));
@@ -308,6 +332,7 @@ export async function setupBot(): Promise<void> {
       return;
     }
     translationIntents.delete(userId);
+    arenaPublishRequests.delete(userId);
     await ctx.reply('Режим перевода отключён.', {
       reply_markup: mainKeyboard.reply_markup,
     });
@@ -322,6 +347,7 @@ export async function setupBot(): Promise<void> {
       await ctx.reply('Не удалось определить пользователя.');
       return;
     }
+    arenaPublishRequests.delete(userId);
     const intent = translationIntents.get(userId);
     if (!intent) {
       await ctx.reply('Возвращаюсь в главное меню.', {
@@ -371,6 +397,33 @@ export async function setupBot(): Promise<void> {
     await cancelFlow(ctx);
   });
 
+  bot.action(/publish:([a-f0-9]+)/i, async (ctx) => {
+    const token = ctx.match && ctx.match[1];
+    await ctx.answerCbQuery();
+    if (!token) {
+      await ctx.reply('Кнопка устарела. Попробуйте скачать ролик заново.');
+      return;
+    }
+    if (!ctx.from?.id) {
+      await ctx.reply('Не удалось определить пользователя.');
+      return;
+    }
+    const result = await publishCandidateToken(token, ctx.telegram, ctx.from);
+    if (result.ok) {
+      await ctx.reply(`📣 Видео отправлено в ${getArenaDisplayName()}!`);
+    } else {
+      let errorMessage = '⚠️ Не удалось опубликовать видео. Попробуйте ещё раз.';
+      if (result.reason === 'disabled') {
+        errorMessage = '⚙️ Публикация временно отключена. Сообщите администратору.';
+      } else if (result.reason === 'not_found') {
+        errorMessage = '⚠️ Видео больше недоступно. Скачайте его снова.';
+      } else if (result.reason === 'forbidden') {
+        errorMessage = '❌ Эту кнопку может использовать только автор скачанного ролика.';
+      }
+      await ctx.reply(errorMessage);
+    }
+  });
+
   bot.on('text', async (ctx) => {
     const text = ctx.message?.text;
     const userId = ctx.from?.id;
@@ -378,6 +431,24 @@ export async function setupBot(): Promise<void> {
     if (text && text.startsWith('/')) {
       return;
     }
+
+     const awaitingArenaLink = userId ? arenaPublishRequests.has(userId) : false;
+     if (awaitingArenaLink) {
+       if (text && text.startsWith('http')) {
+         arenaPublishRequests.delete(userId!);
+         translationIntents.delete(userId!);
+         const publishState = ctx.state as { publishToArena?: boolean };
+         publishState.publishToArena = true;
+         await ctx.reply('📣 Публикация включена. Скачиваю ролик и загружу его в канал.', {
+           reply_markup: mainKeyboard.reply_markup,
+         });
+       } else {
+         await ctx.reply('Пожалуйста, пришлите ссылку на ролик или нажмите Отмена.', {
+           reply_markup: linkPromptKeyboard.reply_markup,
+         });
+         return;
+       }
+     }
 
     if (text && text.startsWith('http')) {
       if (userId && translationIntents.has(userId)) {

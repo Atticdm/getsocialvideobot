@@ -26,6 +26,8 @@ const configSchema = z.object({
   LINKEDIN_COOKIES_B64: z.string().optional().default(''),
   YOUTUBE_COOKIES_B64: z.string().optional().default(''),
   YOUTUBE_GEO_COUNTRIES: z.string().optional().default(''),
+  ARENA_CHANNEL_ID: z.string().optional().default(''),
+  ARENA_CHANNEL_URL: z.string().optional().default(''),
   TIKTOK_COOKIES_B64: z.string().optional().default(''),
   SORA_COOKIES_B64: z.string().optional().default(''),
   DEBUG_YTDLP: z.coerce.boolean().optional().default(false),

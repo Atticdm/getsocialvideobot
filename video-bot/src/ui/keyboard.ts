@@ -1,6 +1,9 @@
 import { Markup } from 'telegraf';
 
-export const mainKeyboard = Markup.keyboard([['🌐 Перевести видео', '🎙 Озвучить видео']]).resize();
+export const mainKeyboard = Markup.keyboard([
+  ['🌐 Перевести видео', '🎙 Озвучить видео'],
+  ['📣 Опубликовать в канал'],
+]).resize();
 
 export const translateDirectionKeyboard = Markup.keyboard([
   ['🇬🇧 → 🇷🇺', '🇷🇺 → 🇬🇧'],

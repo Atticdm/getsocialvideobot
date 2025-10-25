@@ -1,4 +1,4 @@
-import { Context } from 'telegraf';
+import { Context, Markup } from 'telegraf';
 import { detectProvider, getProvider } from '../../providers';
 import { rateLimiter } from '../../core/rateLimit';
 import { makeSessionDir, safeRemove } from '../../core/fs';
@@ -6,6 +6,12 @@ import { ensureBelowLimit } from '../../core/size';
 import { toUserMessage, AppError } from '../../core/errors';
 import { logger } from '../../core/logger';
 import * as path from 'path';
+import {
+  getArenaDisplayName,
+  isArenaPublishingEnabled,
+  publishCandidateToken,
+  registerPublishCandidate,
+} from '../publish';
 
 export async function downloadCommand(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -62,7 +68,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
 
       // Send file
       const fileName = path.basename(result.filePath);
-      await ctx.replyWithDocument(
+      const sentMessage = await ctx.replyWithDocument(
         { source: result.filePath, filename: fileName },
         {
           reply_parameters: {
@@ -77,6 +83,50 @@ export async function downloadCommand(ctx: Context): Promise<void> {
         filePath: result.filePath,
         videoInfo: result.videoInfo 
       });
+
+      const publishState = ctx.state as { publishToArena?: boolean | undefined };
+      const shouldAutoPublish = Boolean(publishState?.publishToArena);
+      if (publishState && publishState.publishToArena !== undefined) {
+        publishState.publishToArena = undefined;
+      }
+
+      if (isArenaPublishingEnabled() && userId) {
+        const document = 'document' in sentMessage ? sentMessage.document : undefined;
+        const fileId = document?.file_id;
+        if (fileId) {
+          const token = registerPublishCandidate({
+            ownerId: userId,
+            fileId,
+            fileName,
+            originalUrl: url,
+          });
+
+          if (shouldAutoPublish) {
+            const resultPublish = await publishCandidateToken(token, ctx.telegram, ctx.from);
+            if (resultPublish.ok) {
+              await ctx.reply(`📣 Видео опубликовано в ${getArenaDisplayName()}!`);
+            } else {
+              let publishError = '⚠️ Не удалось опубликовать видео. Попробуйте ещё раз позже.';
+              if (resultPublish.reason === 'disabled') {
+                publishError = '⚙️ Публикация временно недоступна. Свяжитесь с администратором.';
+              } else if (resultPublish.reason === 'not_found') {
+                publishError = '⚠️ Видео больше недоступно для публикации. Скачайте его снова.';
+              }
+              await ctx.reply(publishError);
+            }
+          } else {
+            await ctx.reply(
+              'Хочешь поделиться роликом в Reels Arena?',
+              Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
+            );
+          }
+        } else {
+          logger.warn(
+            { userId, url },
+            'Unable to register publish candidate because document file_id is missing'
+          );
+        }
+      }
 
     } finally {
       // Clean up session directory
