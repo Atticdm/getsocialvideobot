@@ -11,6 +11,7 @@ import { findDownloadedFile, parseVideoInfoFromPath } from '../utils';
 type YouTubeArgsOptions = {
   cookiesPath?: string;
   extra?: string[];
+  geoBypassCountry?: string;
 };
 
 type YouTubeDownloadStrategy = {
@@ -53,7 +54,8 @@ function buildYouTubeArgs(outDir: string, options?: YouTubeArgsOptions): string[
     '-o', path.join(outDir, '%(title).80B.%(id)s.%(ext)s'),
   ];
 
-  if (config.GEO_BYPASS_COUNTRY) args.push('--geo-bypass-country', config.GEO_BYPASS_COUNTRY);
+  const geoCountry = opts.geoBypassCountry ?? config.GEO_BYPASS_COUNTRY;
+  if (geoCountry) args.push('--geo-bypass-country', geoCountry);
   if (opts.cookiesPath) args.push('--cookies', opts.cookiesPath);
   if (opts.extra?.length) args.push(...opts.extra);
   if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') args.unshift('-v');
@@ -131,6 +133,16 @@ function buildYouTubeStrategies(cookiesPath?: string): YouTubeDownloadStrategy[]
   return strategies;
 }
 
+function resolveGeoCountryList(): (string | undefined)[] {
+  if (config.YOUTUBE_GEO_COUNTRIES_LIST.length) {
+    return config.YOUTUBE_GEO_COUNTRIES_LIST;
+  }
+  if (config.GEO_BYPASS_COUNTRY) {
+    return [config.GEO_BYPASS_COUNTRY.toUpperCase()];
+  }
+  return [undefined];
+}
+
 function mapYtDlpError(stderr: string): string {
   const s = (stderr || '').toLowerCase();
   if (s.includes('login') || s.includes('private') || s.includes('sign in') || s.includes('age') || s.includes('restricted') || s.includes('members-only')) return ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED;
@@ -145,19 +157,30 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
 
   const cookiesPath = await prepareYouTubeCookies(outDir);
   const strategies = buildYouTubeStrategies(cookiesPath);
+  const geoCountries = resolveGeoCountryList();
+  const attempts = geoCountries.flatMap((geoCountry) =>
+    strategies.map((strategy) => ({ strategy, geoCountry }))
+  );
 
   let lastError: AppError | null = null;
 
-  for (let i = 0; i < strategies.length; i++) {
-    const strategy = strategies[i]!;
-    const args = buildYouTubeArgs(outDir, strategy.options);
+  for (let i = 0; i < attempts.length; i++) {
+    const attempt = attempts[i]!;
+    const strategy = attempt.strategy;
+    const strategyOptions: YouTubeArgsOptions = { ...strategy.options };
+    if (attempt.geoCountry) {
+      strategyOptions.geoBypassCountry = attempt.geoCountry;
+    }
+    const args = buildYouTubeArgs(outDir, strategyOptions);
     args.push(url);
 
     logger.info(
-      { url, attempt: strategy.name, description: strategy.description },
+      { url, attempt: strategy.name, description: strategy.description, geoCountry: attempt.geoCountry },
       'Executing yt-dlp strategy for YouTube'
     );
-    if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (youtube)', { attempt: strategy.name, args });
+    if (config.DEBUG_YTDLP) {
+      logger.debug('yt-dlp args (youtube)', { attempt: strategy.name, geoCountry: attempt.geoCountry, args });
+    }
 
     try {
       const result = await run('yt-dlp', args, { timeout: 900000 });
@@ -173,7 +196,10 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
         }
 
         const stats = await fs.stat(filePath);
-        logger.info({ filePath, size: stats.size, attempt: strategy.name }, 'Downloaded file stats');
+        logger.info(
+          { filePath, size: stats.size, attempt: strategy.name, geoCountry: attempt.geoCountry },
+          'Downloaded file stats'
+        );
 
         const info = parseVideoInfoFromPath(filePath, url);
         logger.info('YouTube video downloaded and processed successfully', { url, filePath, info });
@@ -183,6 +209,7 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
       logger.error('yt-dlp command failed (youtube)', {
         url,
         attempt: strategy.name,
+        geoCountry: attempt.geoCountry,
         code: result.code,
         stderrPreview: (result.stderr || '').slice(0, 1200),
       });
@@ -191,6 +218,7 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
         stderr: result.stderr,
         code: result.code,
         attempt: strategy.name,
+        geoCountry: attempt.geoCountry,
       });
     } catch (error) {
       if (error instanceof AppError) {
@@ -198,11 +226,11 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
         const shouldRetry =
           strategy.retryable &&
           RETRYABLE_ERROR_CODES.has(error.code as ErrorCode) &&
-          i < strategies.length - 1;
+          i < attempts.length - 1;
 
         if (shouldRetry) {
           logger.warn(
-            { url, attempt: strategy.name, errorCode: error.code },
+            { url, attempt: strategy.name, geoCountry: attempt.geoCountry, errorCode: error.code },
             'YouTube strategy failed, trying next fallback'
           );
           continue;
@@ -215,11 +243,13 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
         url,
         outDir,
         attempt: strategy.name,
+        geoCountry: attempt.geoCountry,
       });
       throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Unexpected error during download', {
         url,
         originalError: error,
         attempt: strategy.name,
+        geoCountry: attempt.geoCountry,
       });
     }
   }
@@ -238,6 +268,8 @@ export async function fetchYouTubeMetadata(url: string): Promise<VideoMetadata> 
       extra: ['--dump-single-json', '--skip-download'],
     };
     if (cookiesPath) options.cookiesPath = cookiesPath;
+    const geoCountry = resolveGeoCountryList().find((code) => !!code);
+    if (geoCountry) options.geoBypassCountry = geoCountry;
     const args = buildYouTubeArgs(tempDir, options);
     args.push(url);
 

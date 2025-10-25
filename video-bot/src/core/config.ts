@@ -25,6 +25,7 @@ const configSchema = z.object({
   INSTAGRAM_COOKIES_B64: z.string().optional().default(''),
   LINKEDIN_COOKIES_B64: z.string().optional().default(''),
   YOUTUBE_COOKIES_B64: z.string().optional().default(''),
+  YOUTUBE_GEO_COUNTRIES: z.string().optional().default(''),
   TIKTOK_COOKIES_B64: z.string().optional().default(''),
   SORA_COOKIES_B64: z.string().optional().default(''),
   DEBUG_YTDLP: z.coerce.boolean().optional().default(false),
@@ -50,12 +51,27 @@ const configSchema = z.object({
   LALAL_API_KEY: z.string().optional().default(''),
 });
 
-export type Config = z.infer<typeof configSchema>;
+type BaseConfig = z.infer<typeof configSchema>;
+export type Config = BaseConfig & {
+  YOUTUBE_GEO_COUNTRIES_LIST: string[];
+};
+
+function parseCountryList(value?: string): string[] {
+  if (!value) return [];
+  return value
+    .split(/[,\s]+/)
+    .map((code) => code.trim().toUpperCase())
+    .filter((code) => /^[A-Z]{2}$/.test(code));
+}
 
 let appConfig: Config;
 
 try {
-  appConfig = configSchema.parse(process.env);
+  const parsed = configSchema.parse(process.env);
+  appConfig = {
+    ...parsed,
+    YOUTUBE_GEO_COUNTRIES_LIST: parseCountryList(parsed.YOUTUBE_GEO_COUNTRIES),
+  };
   if (appConfig.APP_MODE === 'bot' && (!appConfig.BOT_TOKEN || appConfig.BOT_TOKEN.length === 0)) {
     console.error('Configuration validation failed:');
     console.error('  BOT_TOKEN: Required in APP_MODE=bot');
