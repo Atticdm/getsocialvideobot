@@ -1,4 +1,4 @@
-import { Telegraf } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
 import type { Context } from 'telegraf';
 import { config } from '../core/config';
 import { logger } from '../core/logger';
@@ -53,6 +53,40 @@ let handlersRegistered = false;
 let signalsRegistered = false;
 export const translationIntents = new Map<number, TranslationIntent>();
 const arenaPublishRequests = new Set<number>();
+
+const ARENA_MEMBER_STATUSES = new Set(['member', 'administrator', 'creator']);
+
+async function ensureArenaSubscription(ctx: Context): Promise<boolean> {
+  if (!isArenaPublishingEnabled()) return true;
+  const userId = ctx.from?.id;
+  if (!userId) {
+    await ctx.reply('Не удалось определить пользователя.');
+    return false;
+  }
+
+  try {
+    const member = await ctx.telegram.getChatMember(config.ARENA_CHANNEL_ID!, userId);
+    if (ARENA_MEMBER_STATUSES.has(member.status)) return true;
+  } catch (error) {
+    logger.warn({ error, userId }, 'Failed to verify arena subscription');
+    await ctx.reply('⚠️ Не удалось проверить подписку. Попробуйте позже.');
+    return false;
+  }
+
+  const channelLink = config.ARENA_CHANNEL_URL || (config.ARENA_CHANNEL_ID?.startsWith('@')
+    ? `https://t.me/${config.ARENA_CHANNEL_ID.slice(1)}`
+    : undefined);
+
+  const message = `Сначала вступите в ${getArenaDisplayName()}, чтобы публиковать ролики.`;
+  if (channelLink) {
+    await ctx.reply(message, {
+      reply_markup: Markup.inlineKeyboard([Markup.button.url('Перейти в канал', channelLink)]).reply_markup,
+    });
+  } else {
+    await ctx.reply(message);
+  }
+  return false;
+}
 
 async function logToolVersions(): Promise<void> {
   try {
@@ -230,6 +264,8 @@ export async function setupBot(): Promise<void> {
       await ctx.reply('⚙️ Публикация в канал временно недоступна. Свяжитесь с администратором.');
       return;
     }
+    const subscribed = await ensureArenaSubscription(ctx);
+    if (!subscribed) return;
     const userId = ctx.from?.id;
     if (!userId) {
       await ctx.reply('Не удалось определить пользователя.');
@@ -406,6 +442,10 @@ export async function setupBot(): Promise<void> {
     }
     if (!ctx.from?.id) {
       await ctx.reply('Не удалось определить пользователя.');
+      return;
+    }
+    const subscribed = await ensureArenaSubscription(ctx);
+    if (!subscribed) {
       return;
     }
     const result = await publishCandidateToken(token, ctx.telegram, ctx.from);
