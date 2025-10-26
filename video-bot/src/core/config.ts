@@ -19,6 +19,8 @@ const configSchema = z.object({
   REDIS_URL: z.string().optional().default(''),
   CACHE_PREFIX: z.string().optional().default('yeet:'),
   CACHE_TTL_SECONDS: z.coerce.number().positive().optional().default(3600),
+  POSTHOG_API_KEY: z.string().optional().default(''),
+  POSTHOG_HOST: z.string().optional().default('https://us.i.posthog.com'),
   // Optional: base64-encoded Netscape cookies.txt for Facebook
   FACEBOOK_COOKIES_B64: z.string().optional().default(''),
   // Optional: base64-encoded Netscape cookies.txt for Instagram

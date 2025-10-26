@@ -119,6 +119,8 @@ HUME_AUDIO_FORMAT=wav
   1. Export cookies from your browser to `cookies.txt` (Netscape format)
   2. Base64-encode the file: `base64 -w0 cookies.txt`
   3. Set the value as `FACEBOOK_COOKIES_B64` in your deploy platform
+- `POSTHOG_API_KEY` (optional): Enable PostHog analytics by providing your project API key
+- `POSTHOG_HOST` (optional): Override PostHog ingestion endpoint (default: `https://us.i.posthog.com`)
 
 ## Usage
 

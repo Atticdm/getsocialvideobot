@@ -1,10 +1,12 @@
 import { Context, Markup } from 'telegraf';
 import { detectProvider, getProvider } from '../../providers';
+import type { ProviderName } from '../../providers';
 import { rateLimiter } from '../../core/rateLimit';
 import { makeSessionDir, safeRemove } from '../../core/fs';
 import { ensureBelowLimit } from '../../core/size';
 import { toUserMessage, AppError } from '../../core/errors';
 import { logger } from '../../core/logger';
+import { trackUserEvent } from '../../core/analytics';
 import * as path from 'path';
 import {
   getArenaDisplayName,
@@ -16,6 +18,7 @@ import {
 export async function downloadCommand(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username;
+  let providerName: ProviderName | null = null;
   
   if (!userId) {
     await ctx.reply('User ID not found. Please try again.');
@@ -33,6 +36,10 @@ export async function downloadCommand(ctx: Context): Promise<void> {
   }
 
   logger.info('Download command received', { userId, username, url });
+  trackUserEvent('command.download', userId, {
+    username,
+    hasUrl: Boolean(url),
+  });
 
   // Check rate limit
   const status = rateLimiter.getStatus(userId);
@@ -46,11 +53,15 @@ export async function downloadCommand(ctx: Context): Promise<void> {
   
   try {
     // Detect provider
-    const providerName = detectProvider(url);
+    providerName = detectProvider(url);
     if (!providerName) {
       await ctx.reply('❌ Unsupported video provider. Supported platforms: Facebook, Instagram, LinkedIn, YouTube, TikTok, Sora.');
       return;
     }
+
+    trackUserEvent('download.requested', userId, {
+      provider: providerName,
+    });
 
     // Send initial message
     const processingMessage = await ctx.reply('⏳ Download started... This may take a few minutes.');
@@ -73,9 +84,19 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       }
 
       const fileName = path.basename(result.filePath);
+      trackUserEvent('download.succeeded', userId, {
+        provider: providerName,
+        durationSeconds: result.videoInfo?.duration,
+        sizeBytes: result.videoInfo?.size,
+      });
 
       if (shouldAutoPublish) {
         if (!isArenaPublishingEnabled()) {
+          trackUserEvent('download.auto_publish', userId, {
+            provider: providerName,
+            success: false,
+            reason: 'disabled',
+          });
           await ctx.reply('⚙️ Публикация в канал временно недоступна. Попробуйте позже.');
         } else {
           const published = await publishFileDirectlyToArena({
@@ -83,6 +104,10 @@ export async function downloadCommand(ctx: Context): Promise<void> {
             fileName,
             originalUrl: url,
             telegram: ctx.telegram,
+          });
+          trackUserEvent('download.auto_publish', userId, {
+            provider: providerName,
+            success: published,
           });
           if (published) {
             await ctx.reply(`📣 Видео опубликовано в ${getArenaDisplayName()}!`);
@@ -125,6 +150,9 @@ export async function downloadCommand(ctx: Context): Promise<void> {
             'Хочешь поделиться роликом в Reels Arena?',
             Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
           );
+          trackUserEvent('download.publish_prompt', userId, {
+            provider: providerName,
+          });
         } else {
           logger.warn(
             { userId, url },
@@ -144,6 +172,10 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       userId, 
       username, 
       url 
+    });
+    trackUserEvent('download.failed', userId, {
+      provider: providerName || 'unknown',
+      error: error instanceof AppError ? error.code : error instanceof Error ? error.message : String(error),
     });
 
     let errorMessage: string;

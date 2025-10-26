@@ -17,6 +17,7 @@ import * as path from 'path';
 import { translationIntents } from '../telegraf';
 import { mainKeyboard } from '../../ui/keyboard';
 import { VoicePreset } from '../../types/voice';
+import { trackUserEvent } from '../../core/analytics';
 
 const stageLabels: Record<TranslationStage['name'], string> = {
   download: 'Скачиваю видео',
@@ -137,6 +138,13 @@ export async function translateCommand(ctx: Context): Promise<void> {
     mode,
     voicePreset,
   });
+  trackUserEvent('command.translate', userId, {
+    username,
+    direction,
+    engine,
+    mode,
+    voicePreset,
+  });
 
   const status = rateLimiter.getStatus(userId);
   if (status.active >= 2) {
@@ -198,6 +206,13 @@ export async function translateCommand(ctx: Context): Promise<void> {
             }
           : undefined
       );
+      trackUserEvent('translate.succeeded', userId, {
+        direction,
+        engine,
+        mode,
+        voicePreset: result.voicePreset ?? voicePreset,
+        stages: result.stages.length,
+      });
 
       if (statusMessageId) {
         await appendProgress('🎉 Готово!');
@@ -229,6 +244,13 @@ export async function translateCommand(ctx: Context): Promise<void> {
       },
       'Translation command failed'
     );
+    trackUserEvent('translate.failed', userId, {
+      direction,
+      engine,
+      mode,
+      voicePreset,
+      error: appError?.code || (error instanceof Error ? error.message : String(error)),
+    });
 
     let message: string;
     if (error instanceof AppError) {

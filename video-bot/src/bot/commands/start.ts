@@ -1,6 +1,7 @@
 import { Context } from 'telegraf';
 import { mainKeyboard } from '../../ui/keyboard';
 import { logger } from '../../core/logger';
+import { trackUserEvent } from '../../core/analytics';
 
 export async function startCommand(ctx: Context): Promise<void> {
   try {
@@ -8,6 +9,7 @@ export async function startCommand(ctx: Context): Promise<void> {
     const username = ctx.from?.username;
     
     logger.info('Start command received', { userId, username });
+    trackUserEvent('command.start', userId, { username });
     
     const message = `🎥 Welcome!
 
@@ -21,6 +23,9 @@ export async function startCommand(ctx: Context): Promise<void> {
     await ctx.reply(message, { reply_markup: mainKeyboard.reply_markup });
   } catch (error) {
     logger.error('Error in start command', { error, userId: ctx.from?.id });
+    trackUserEvent('command.start.error', ctx.from?.id, {
+      error: error instanceof Error ? error.message : String(error),
+    });
     await ctx.reply('Sorry, something went wrong. Please try again.');
   }
 }

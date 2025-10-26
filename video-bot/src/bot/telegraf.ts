@@ -23,6 +23,7 @@ import { getVoiceIdForPreset } from '../services/elevenlabs';
 import { setupInlineHandlers } from './inline';
 import type { VoiceLanguage, VoicePreset } from '../types/voice';
 import { getArenaDisplayName, isArenaPublishingEnabled, publishCandidateToken } from './publish';
+import { shutdownAnalytics, trackSystemEvent, trackUserEvent } from '../core/analytics';
 
 type TranslationIntent =
   | { flow: 'translate'; stage: 'direction' }
@@ -109,11 +110,13 @@ function ensureSignals(): void {
   signalsRegistered = true;
   process.once('SIGINT', () => {
     logger.info('Received SIGINT, shutting down gracefully');
+    void shutdownAnalytics();
     bot.stop('SIGINT');
   });
 
   process.once('SIGTERM', () => {
     logger.info('Received SIGTERM, shutting down gracefully');
+    void shutdownAnalytics();
     bot.stop('SIGTERM');
   });
 }
@@ -574,6 +577,13 @@ export async function setupBot(): Promise<void> {
       message: ctx.message && 'text' in ctx.message ? ctx.message.text : 'unknown',
     });
 
+    const messageText = ctx.message && 'text' in ctx.message ? ctx.message.text : undefined;
+    const commandToken = messageText && messageText.startsWith('/') ? messageText.split(' ')[0] : undefined;
+    trackUserEvent('bot.error', ctx.from?.id, {
+      error: err instanceof Error ? err.message : String(err),
+      command: commandToken,
+    });
+
     ctx.reply('Sorry, something went wrong. Please try again.');
   });
 }
@@ -585,6 +595,7 @@ export async function startPolling(): Promise<void> {
   await bot.launch();
   ensureSignals();
   logger.info('Bot started successfully (long polling)');
+  trackSystemEvent('bot.started', { transport: 'polling' });
 }
 
 export async function configureWebhook(publicUrl: string): Promise<void> {
@@ -595,4 +606,5 @@ export async function configureWebhook(publicUrl: string): Promise<void> {
   await bot.telegram.setWebhook(`${base}/bot`);
   ensureSignals();
   logger.info({ webhookUrl: `${base}/bot` }, 'Webhook configured');
+  trackSystemEvent('bot.webhook_configured', { webhookUrl: `${base}/bot` });
 }

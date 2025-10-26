@@ -3,6 +3,7 @@ import type { Telegram } from 'telegraf';
 import type { User } from '@telegraf/types';
 import { config } from '../core/config';
 import { logger } from '../core/logger';
+import { trackUserEvent } from '../core/analytics';
 
 const CANDIDATE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -86,15 +87,27 @@ export async function publishCandidateToken(
   requester: User | undefined
 ): Promise<PublishResult> {
   if (!config.ARENA_CHANNEL_ID) {
+    trackUserEvent('arena.publish_attempt', requester?.id, {
+      success: false,
+      reason: 'disabled',
+    });
     return { ok: false, reason: 'disabled' };
   }
 
   const candidate = getPublishCandidate(token);
   if (!candidate) {
+    trackUserEvent('arena.publish_attempt', requester?.id, {
+      success: false,
+      reason: 'not_found',
+    });
     return { ok: false, reason: 'not_found' };
   }
 
   if (requester?.id !== candidate.ownerId) {
+    trackUserEvent('arena.publish_attempt', requester?.id, {
+      success: false,
+      reason: 'forbidden',
+    });
     return { ok: false, reason: 'forbidden' };
   }
 
@@ -106,6 +119,9 @@ export async function publishCandidateToken(
       disable_notification: false,
     });
     removePublishCandidate(token);
+    trackUserEvent('arena.publish_attempt', requester?.id, {
+      success: true,
+    });
     return { ok: true };
   } catch (error) {
     logger.error(
@@ -116,6 +132,10 @@ export async function publishCandidateToken(
       },
       'Failed to publish candidate to Arena channel'
     );
+    trackUserEvent('arena.publish_attempt', requester?.id, {
+      success: false,
+      reason: 'send_failed',
+    });
     return { ok: false, reason: 'send_failed' };
   }
 }

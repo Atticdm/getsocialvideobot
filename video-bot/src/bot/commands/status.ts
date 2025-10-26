@@ -3,6 +3,7 @@ import { run } from '../../core/exec';
 import { getFreeDiskSpace } from '../../core/fs';
 import { logger } from '../../core/logger';
 import { config } from '../../core/config';
+import { trackUserEvent } from '../../core/analytics';
 
 export async function statusCommand(ctx: Context): Promise<void> {
   try {
@@ -10,6 +11,7 @@ export async function statusCommand(ctx: Context): Promise<void> {
     const username = ctx.from?.username;
     
     logger.info('Status command received', { userId, username });
+    trackUserEvent('command.status', userId, { username });
     
     const version = process.env['npm_package_version'] || '1.0.0';
     const uptime = formatUptime(process.uptime());
@@ -58,6 +60,9 @@ export async function statusCommand(ctx: Context): Promise<void> {
     await ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {
     logger.error('Error in status command', { error, userId: ctx.from?.id });
+    trackUserEvent('command.status.error', ctx.from?.id, {
+      error: error instanceof Error ? error.message : String(error),
+    });
     await ctx.reply('Sorry, something went wrong while checking status.');
   }
 }

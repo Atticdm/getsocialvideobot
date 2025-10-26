@@ -1,5 +1,6 @@
 import { Context } from 'telegraf';
 import { logger } from '../../core/logger';
+import { trackUserEvent } from '../../core/analytics';
 
 export async function helpCommand(ctx: Context): Promise<void> {
   try {
@@ -7,6 +8,7 @@ export async function helpCommand(ctx: Context): Promise<void> {
     const username = ctx.from?.username;
     
     logger.info('Help command received', { userId, username });
+    trackUserEvent('command.help', userId, { username });
     
     const message = `📖 Справка
 
@@ -36,6 +38,9 @@ export async function helpCommand(ctx: Context): Promise<void> {
     await ctx.reply(message);
   } catch (error) {
     logger.error('Error in help command', { error, userId: ctx.from?.id });
+    trackUserEvent('command.help.error', ctx.from?.id, {
+      error: error instanceof Error ? error.message : String(error),
+    });
     await ctx.reply('Sorry, something went wrong. Please try again.');
   }
 }

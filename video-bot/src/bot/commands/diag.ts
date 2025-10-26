@@ -3,6 +3,7 @@ import { detectProvider } from '../../providers';
 import { logger } from '../../core/logger';
 import { run } from '../../core/exec';
 import { config } from '../../core/config';
+import { trackUserEvent } from '../../core/analytics';
 
 function sanitize(text: string, max = 1500): string {
   return (text || '').replace(/[`]/g, '\u0060').slice(0, max);
@@ -19,6 +20,10 @@ export async function diagCommand(ctx: Context): Promise<void> {
 
   const provider = detectProvider(url) || 'unknown';
   await ctx.reply(`🔎 Diagnosing...\nProvider: ${provider}`);
+  trackUserEvent('command.diag', ctx.from?.id, {
+    provider,
+    hasUrl: Boolean(url),
+  });
 
   try {
     // Build base args for probing without download
@@ -52,7 +57,10 @@ export async function diagCommand(ctx: Context): Promise<void> {
     await ctx.reply(`❌ Extraction failed\n\n#1 stderr:\n${sanitize(r1.stderr)}\n\n#2 stderr:\n${sanitize(r2.stderr)}`);
   } catch (e) {
     logger.error('diag failed', { error: e });
+    trackUserEvent('command.diag.error', ctx.from?.id, {
+      provider,
+      error: e instanceof Error ? e.message : String(e),
+    });
     await ctx.reply('❌ Diag failed');
   }
 }
-
