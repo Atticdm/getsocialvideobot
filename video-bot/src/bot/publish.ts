@@ -64,33 +64,16 @@ export function removePublishCandidate(token: string): void {
   candidates.delete(token);
 }
 
-function formatRequesterName(user?: User): string | undefined {
-  if (!user) return undefined;
-  if (user.username) return `@${user.username}`;
-  const parts = [user.first_name, user.last_name].filter(Boolean);
-  if (parts.length) {
-    return parts.join(' ');
-  }
-  return undefined;
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function buildCaptionText(originalUrl: string | undefined, requester?: User): string {
-  const lines: string[] = [];
-  const displayName = getArenaDisplayName();
-  lines.push(`📣 Публикация через ${displayName}`);
-  if (originalUrl) {
-    lines.push(`🔗 Источник: ${originalUrl}`);
+function buildCaptionText(originalUrl: string | undefined): string {
+  if (!originalUrl) {
+    return '🔗 Источник недоступен';
   }
-  const requesterName = formatRequesterName(requester);
-  if (requesterName) {
-    lines.push(`🙋 Автор: ${requesterName}`);
-  }
-  lines.push('#reels #arena');
-  return lines.join('\n');
-}
-
-export function buildArenaCaption(originalUrl: string | undefined, requester?: User): string {
-  return buildCaptionText(originalUrl, requester);
+  const safeUrl = escapeHtml(originalUrl);
+  return `<a href="${safeUrl}">🔗 Источник</a>`;
 }
 
 export type PublishResult =
@@ -116,9 +99,10 @@ export async function publishCandidateToken(
   }
 
   try {
-    const caption = buildCaptionText(candidate.originalUrl, requester);
+    const caption = buildCaptionText(candidate.originalUrl);
     await telegram.sendDocument(config.ARENA_CHANNEL_ID, candidate.fileId, {
       caption,
+      parse_mode: 'HTML',
       disable_notification: false,
     });
     removePublishCandidate(token);
@@ -141,7 +125,6 @@ interface DirectArenaPublishOptions {
   fileName: string;
   originalUrl?: string;
   telegram: Telegram;
-  requester?: User;
 }
 
 export async function publishFileDirectlyToArena(
@@ -149,11 +132,11 @@ export async function publishFileDirectlyToArena(
 ): Promise<boolean> {
   if (!config.ARENA_CHANNEL_ID) return false;
   try {
-    const caption = buildCaptionText(options.originalUrl, options.requester);
+    const caption = buildCaptionText(options.originalUrl);
     await options.telegram.sendDocument(
       config.ARENA_CHANNEL_ID,
       { source: options.filePath, filename: options.fileName },
-      { caption }
+      { caption, parse_mode: 'HTML' }
     );
     return true;
   } catch (error) {

@@ -83,7 +83,6 @@ export async function downloadCommand(ctx: Context): Promise<void> {
             fileName,
             originalUrl: url,
             telegram: ctx.telegram,
-            requester: ctx.from,
           });
           if (published) {
             await ctx.reply(`📣 Видео опубликовано в ${getArenaDisplayName()}!`);
