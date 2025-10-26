@@ -9,7 +9,7 @@ import * as path from 'path';
 import {
   getArenaDisplayName,
   isArenaPublishingEnabled,
-  publishCandidateToken,
+  publishFileDirectlyToArena,
   registerPublishCandidate,
 } from '../publish';
 
@@ -66,8 +66,35 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       // Check file size
       await ensureBelowLimit(result.filePath);
 
-      // Send file
+      const publishState = ctx.state as { publishToArena?: boolean | undefined };
+      const shouldAutoPublish = Boolean(publishState?.publishToArena);
+      if (publishState && publishState.publishToArena !== undefined) {
+        publishState.publishToArena = undefined;
+      }
+
       const fileName = path.basename(result.filePath);
+
+      if (shouldAutoPublish) {
+        if (!isArenaPublishingEnabled()) {
+          await ctx.reply('⚙️ Публикация в канал временно недоступна. Попробуйте позже.');
+        } else {
+          const published = await publishFileDirectlyToArena({
+            filePath: result.filePath,
+            fileName,
+            originalUrl: url,
+            telegram: ctx.telegram,
+            requester: ctx.from,
+          });
+          if (published) {
+            await ctx.reply(`📣 Видео опубликовано в ${getArenaDisplayName()}!`);
+          } else {
+            await ctx.reply('⚠️ Не удалось опубликовать видео в канал. Попробуйте позже.');
+          }
+        }
+        return;
+      }
+
+      // Send file to user
       const sentMessage = await ctx.replyWithDocument(
         { source: result.filePath, filename: fileName },
         {
@@ -77,18 +104,12 @@ export async function downloadCommand(ctx: Context): Promise<void> {
         }
       );
 
-      logger.info('Video sent successfully', { 
-        userId, 
-        url, 
+      logger.info('Video sent successfully', {
+        userId,
+        url,
         filePath: result.filePath,
-        videoInfo: result.videoInfo 
+        videoInfo: result.videoInfo,
       });
-
-      const publishState = ctx.state as { publishToArena?: boolean | undefined };
-      const shouldAutoPublish = Boolean(publishState?.publishToArena);
-      if (publishState && publishState.publishToArena !== undefined) {
-        publishState.publishToArena = undefined;
-      }
 
       if (isArenaPublishingEnabled() && userId) {
         const document = 'document' in sentMessage ? sentMessage.document : undefined;
@@ -101,25 +122,10 @@ export async function downloadCommand(ctx: Context): Promise<void> {
             originalUrl: url,
           });
 
-          if (shouldAutoPublish) {
-            const resultPublish = await publishCandidateToken(token, ctx.telegram, ctx.from);
-            if (resultPublish.ok) {
-              await ctx.reply(`📣 Видео опубликовано в ${getArenaDisplayName()}!`);
-            } else {
-              let publishError = '⚠️ Не удалось опубликовать видео. Попробуйте ещё раз позже.';
-              if (resultPublish.reason === 'disabled') {
-                publishError = '⚙️ Публикация временно недоступна. Свяжитесь с администратором.';
-              } else if (resultPublish.reason === 'not_found') {
-                publishError = '⚠️ Видео больше недоступно для публикации. Скачайте его снова.';
-              }
-              await ctx.reply(publishError);
-            }
-          } else {
-            await ctx.reply(
-              'Хочешь поделиться роликом в Reels Arena?',
-              Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
-            );
-          }
+          await ctx.reply(
+            'Хочешь поделиться роликом в Reels Arena?',
+            Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
+          );
         } else {
           logger.warn(
             { userId, url },

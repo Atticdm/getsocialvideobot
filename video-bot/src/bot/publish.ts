@@ -74,12 +74,12 @@ function formatRequesterName(user?: User): string | undefined {
   return undefined;
 }
 
-function buildCaption(candidate: PublishCandidate, requester?: User): string {
+function buildCaptionText(originalUrl: string | undefined, requester?: User): string {
   const lines: string[] = [];
   const displayName = getArenaDisplayName();
   lines.push(`📣 Публикация через ${displayName}`);
-  if (candidate.originalUrl) {
-    lines.push(`🔗 Источник: ${candidate.originalUrl}`);
+  if (originalUrl) {
+    lines.push(`🔗 Источник: ${originalUrl}`);
   }
   const requesterName = formatRequesterName(requester);
   if (requesterName) {
@@ -87,6 +87,10 @@ function buildCaption(candidate: PublishCandidate, requester?: User): string {
   }
   lines.push('#reels #arena');
   return lines.join('\n');
+}
+
+export function buildArenaCaption(originalUrl: string | undefined, requester?: User): string {
+  return buildCaptionText(originalUrl, requester);
 }
 
 export type PublishResult =
@@ -112,7 +116,7 @@ export async function publishCandidateToken(
   }
 
   try {
-    const caption = buildCaption(candidate, requester);
+    const caption = buildCaptionText(candidate.originalUrl, requester);
     await telegram.sendDocument(config.ARENA_CHANNEL_ID, candidate.fileId, {
       caption,
       disable_notification: false,
@@ -129,5 +133,34 @@ export async function publishCandidateToken(
       'Failed to publish candidate to Arena channel'
     );
     return { ok: false, reason: 'send_failed' };
+  }
+}
+
+interface DirectArenaPublishOptions {
+  filePath: string;
+  fileName: string;
+  originalUrl?: string;
+  telegram: Telegram;
+  requester?: User;
+}
+
+export async function publishFileDirectlyToArena(
+  options: DirectArenaPublishOptions
+): Promise<boolean> {
+  if (!config.ARENA_CHANNEL_ID) return false;
+  try {
+    const caption = buildCaptionText(options.originalUrl, options.requester);
+    await options.telegram.sendDocument(
+      config.ARENA_CHANNEL_ID,
+      { source: options.filePath, filename: options.fileName },
+      { caption }
+    );
+    return true;
+  } catch (error) {
+    logger.error(
+      { error, filePath: options.filePath, channelId: config.ARENA_CHANNEL_ID },
+      'Failed to publish file directly to Arena'
+    );
+    return false;
   }
 }
