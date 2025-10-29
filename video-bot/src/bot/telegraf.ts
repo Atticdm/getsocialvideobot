@@ -136,6 +136,19 @@ export async function setupBot(): Promise<void> {
 
   setupInlineHandlers(bot);
 
+  const showDownloadInfo = async (ctx: Context) => {
+    const userId = ctx.from?.id;
+    if (userId) {
+      translationIntents.delete(userId);
+      arenaPublishRequests.delete(userId);
+    }
+    trackUserEvent('menu.download_info', userId, { username: ctx.from?.username });
+    const instructions = `📥 Как скачать видео\n\nПросто пришлите ссылку на поддерживаемое видео, и бот скачает оригинал и вернёт файл в чат.\n\nПоддерживаемые источники:\n• Facebook и Reels\n• Instagram (Reels)\n• YouTube\n• TikTok\n• LinkedIn\n• Sora\n\nСовет: отправляйте одну ссылку в отдельном сообщении, чтобы бот распознал её автоматически.`;
+    await ctx.reply(instructions, {
+      reply_markup: mainKeyboard.reply_markup,
+    });
+  };
+
   const ensureTranslationEnabled = async (ctx: Context) => {
     if (!config.ENABLE_REEL_TRANSLATION) {
       await ctx.reply(
@@ -349,6 +362,7 @@ export async function setupBot(): Promise<void> {
   bot.hears('🌐 Перевести видео', startTranslateFlow);
   bot.hears('🎙 Озвучить видео', startVoiceFlow);
   bot.hears('📣 Опубликовать в канал', startArenaPublishFlow);
+  bot.hears('⬇️ Скачать видео', showDownloadInfo);
   bot.command('publish', startArenaPublishFlow);
 
   bot.hears('🇬🇧 → 🇷🇺', (ctx) => registerTranslationDirection(ctx, 'en-ru'));
