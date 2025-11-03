@@ -1,4 +1,5 @@
 import { Context, Markup } from 'telegraf';
+import type { Message } from 'telegraf/typings/core/types/typegram';
 import { detectProvider, getProvider } from '../../providers';
 import type { ProviderName } from '../../providers';
 import { rateLimiter } from '../../core/rateLimit';
@@ -119,14 +120,31 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       }
 
       // Send file to user
-      const sentMessage = await ctx.replyWithDocument(
-        { source: result.filePath, filename: fileName },
-        {
-          reply_parameters: {
-            message_id: processingMessage.message_id,
-          },
-        }
-      );
+      let sentMessage: Message.VideoMessage | Message.DocumentMessage;
+      try {
+        sentMessage = await ctx.replyWithVideo(
+          { source: result.filePath, filename: fileName },
+          {
+            supports_streaming: true,
+            reply_parameters: {
+              message_id: processingMessage.message_id,
+            },
+          }
+        );
+      } catch (videoError) {
+        logger.warn(
+          { videoError, userId, url },
+          'Failed to send video as media, falling back to document'
+        );
+        sentMessage = await ctx.replyWithDocument(
+          { source: result.filePath, filename: fileName },
+          {
+            reply_parameters: {
+              message_id: processingMessage.message_id,
+            },
+          }
+        );
+      }
 
       logger.info('Video sent successfully', {
         userId,
@@ -136,8 +154,9 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       });
 
       if (isArenaPublishingEnabled() && userId) {
+        const video = 'video' in sentMessage ? sentMessage.video : undefined;
         const document = 'document' in sentMessage ? sentMessage.document : undefined;
-        const fileId = document?.file_id;
+        const fileId = video?.file_id ?? document?.file_id;
         if (fileId) {
           const token = registerPublishCandidate({
             ownerId: userId,
