@@ -196,36 +196,16 @@ export async function translateCommand(ctx: Context): Promise<void> {
       await ensureBelowLimit(result.videoPath);
 
       const fileName = path.basename(result.videoPath);
-      try {
-        await ctx.replyWithVideo(
-          { source: result.videoPath, filename: fileName },
-          statusMessageId
-            ? {
-                supports_streaming: true,
-                reply_parameters: {
-                  message_id: statusMessageId,
-                },
-              }
-            : {
-                supports_streaming: true,
-              }
-        );
-      } catch (videoError) {
-        logger.warn(
-          { videoError, userId, url },
-          'Failed to send translated video as media, falling back to document'
-        );
-        await ctx.replyWithDocument(
-          { source: result.videoPath, filename: fileName },
-          statusMessageId
-            ? {
-                reply_parameters: {
-                  message_id: statusMessageId,
-                },
-              }
-            : undefined
-        );
-      }
+      await ctx.replyWithDocument(
+        { source: result.videoPath, filename: fileName },
+        statusMessageId
+          ? {
+              reply_parameters: {
+                message_id: statusMessageId,
+              },
+            }
+          : undefined
+      );
       trackUserEvent('translate.succeeded', userId, {
         direction,
         engine,
