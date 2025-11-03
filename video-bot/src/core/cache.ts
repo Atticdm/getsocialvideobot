@@ -5,6 +5,7 @@ import { logger } from './logger';
 interface CacheClient {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ttlSeconds: number): Promise<void>;
+  del(key: string): Promise<void>;
 }
 
 class MemoryCache implements CacheClient {
@@ -23,6 +24,10 @@ class MemoryCache implements CacheClient {
   async set(key: string, value: string, ttlSeconds: number): Promise<void> {
     const expiresAt = Date.now() + ttlSeconds * 1000;
     this.store.set(key, { value, expiresAt });
+  }
+
+  async del(key: string): Promise<void> {
+    this.store.delete(key);
   }
 }
 
@@ -56,6 +61,9 @@ if (config.REDIS_URL) {
       async set(key, value, ttlSeconds) {
         await redis.set(key, value, 'EX', ttlSeconds);
       },
+      async del(key) {
+        await redis.del(key);
+      },
     };
   } catch (error: any) {
     logger.error('Redis unavailable, using in-memory cache', { error: error?.message || error });
@@ -74,6 +82,10 @@ export async function cacheGet(key: string): Promise<string | null> {
 
 export async function cacheSet(key: string, value: string, ttlSeconds: number = defaultTtl): Promise<void> {
   await client.set(prefix + key, value, ttlSeconds);
+}
+
+export async function cacheDelete(key: string): Promise<void> {
+  await client.del(prefix + key);
 }
 
 export async function withCache<T>(key: string, loader: () => Promise<T>, ttlSeconds: number = defaultTtl): Promise<T> {

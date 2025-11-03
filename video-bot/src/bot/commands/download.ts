@@ -8,12 +8,20 @@ import { toUserMessage, AppError } from '../../core/errors';
 import { logger } from '../../core/logger';
 import { trackUserEvent } from '../../core/analytics';
 import * as path from 'path';
+import type { Document as TelegramDocument } from 'telegraf/typings/core/types/typegram';
 import {
   getArenaDisplayName,
   isArenaPublishingEnabled,
   publishFileDirectlyToArena,
   registerPublishCandidate,
 } from '../publish';
+import {
+  deleteCachedFile,
+  getCachedFile,
+  normalizeCacheUrl,
+  setCachedFile,
+  type CachedFileRecord,
+} from '../../core/fileCache';
 
 export async function downloadCommand(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -64,7 +72,106 @@ export async function downloadCommand(ctx: Context): Promise<void> {
     });
 
     // Send initial message
+    const normalizedUrl = normalizeCacheUrl(url);
+
+    const cachedRecord = await getCachedFile(normalizedUrl);
+
+    const persistCache = async (
+      document: TelegramDocument | undefined,
+      durationSeconds?: number,
+      sizeBytes?: number
+    ): Promise<void> => {
+      if (!document?.file_id || !document.file_unique_id) return;
+      const record: CachedFileRecord = {
+        fileId: document.file_id,
+        uniqueId: document.file_unique_id,
+        type: 'document',
+        storedAt: Date.now(),
+      };
+      if (providerName) {
+        record.provider = providerName;
+      }
+      if (typeof durationSeconds === 'number') {
+        record.durationSeconds = durationSeconds;
+      }
+      const resolvedSize = typeof sizeBytes === 'number' ? sizeBytes : document.file_size;
+      if (typeof resolvedSize === 'number') {
+        record.sizeBytes = resolvedSize;
+      }
+      await setCachedFile(normalizedUrl, record);
+    };
+
     const processingMessage = await ctx.reply('⏳ Download started... This may take a few minutes.');
+
+    // Use cached version if available and auto-publish not requested
+    const publishStateBefore = ctx.state as { publishToArena?: boolean | undefined };
+    const shouldAutoPublish = Boolean(publishStateBefore?.publishToArena);
+
+    if (cachedRecord && !shouldAutoPublish) {
+      try {
+        const sentMessage = await ctx.replyWithDocument(
+          cachedRecord.fileId,
+          {
+            reply_parameters: {
+              message_id: processingMessage.message_id,
+            },
+          }
+        );
+
+        const document = 'document' in sentMessage ? sentMessage.document : undefined;
+
+        logger.info('Video sent from cache', {
+          userId,
+          url,
+          fileId: document?.file_id,
+          provider: providerName,
+        });
+
+        trackUserEvent('download.succeeded', userId, {
+          provider: providerName,
+          durationSeconds: cachedRecord.durationSeconds,
+          sizeBytes: cachedRecord.sizeBytes,
+          cached: true,
+        });
+
+        if (publishStateBefore && publishStateBefore.publishToArena !== undefined) {
+          publishStateBefore.publishToArena = undefined;
+        }
+
+        await persistCache(document, cachedRecord.durationSeconds, cachedRecord.sizeBytes);
+
+        if (isArenaPublishingEnabled() && userId && document?.file_id) {
+          const token = registerPublishCandidate({
+            ownerId: userId,
+            fileId: document.file_id,
+            fileName: document.file_name ?? `video_${document.file_unique_id}.mp4`,
+            originalUrl: url,
+          });
+
+          await ctx.reply(
+            'Хочешь поделиться роликом в Reels Arena?',
+            Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
+          );
+          trackUserEvent('download.publish_prompt', userId, {
+            provider: providerName,
+            cached: true,
+          });
+        }
+
+        return;
+      } catch (cachedError) {
+        logger.warn(
+          {
+            cachedError,
+            url,
+            userId,
+            fileId: cachedRecord.fileId,
+          },
+          'Failed to send cached file, falling back to fresh download'
+        );
+        await deleteCachedFile(normalizedUrl);
+      }
+    }
 
     // Create session directory
     const sessionDir = await makeSessionDir();
@@ -78,7 +185,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       await ensureBelowLimit(result.filePath);
 
       const publishState = ctx.state as { publishToArena?: boolean | undefined };
-      const shouldAutoPublish = Boolean(publishState?.publishToArena);
+      const shouldAutoPublishDownload = Boolean(publishState?.publishToArena);
       if (publishState && publishState.publishToArena !== undefined) {
         publishState.publishToArena = undefined;
       }
@@ -88,9 +195,10 @@ export async function downloadCommand(ctx: Context): Promise<void> {
         provider: providerName,
         durationSeconds: result.videoInfo?.duration,
         sizeBytes: result.videoInfo?.size,
+        cached: false,
       });
 
-      if (shouldAutoPublish) {
+      if (shouldAutoPublishDownload) {
         if (!isArenaPublishingEnabled()) {
           trackUserEvent('download.auto_publish', userId, {
             provider: providerName,
@@ -139,6 +247,8 @@ export async function downloadCommand(ctx: Context): Promise<void> {
         const document = 'document' in sentMessage ? sentMessage.document : undefined;
         const fileId = document?.file_id;
         if (fileId) {
+          await persistCache(document, result.videoInfo?.duration, result.videoInfo?.size ?? document?.file_size);
+
           const token = registerPublishCandidate({
             ownerId: userId,
             fileId,
@@ -159,6 +269,9 @@ export async function downloadCommand(ctx: Context): Promise<void> {
             'Unable to register publish candidate because document file_id is missing'
           );
         }
+      } else {
+        const document = 'document' in sentMessage ? sentMessage.document : undefined;
+        await persistCache(document, result.videoInfo?.duration, result.videoInfo?.size ?? document?.file_size);
       }
 
     } finally {
