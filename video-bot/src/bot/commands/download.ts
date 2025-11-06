@@ -9,9 +9,6 @@ import { logger } from '../../core/logger';
 import { trackUserEvent } from '../../core/analytics';
 import * as path from 'path';
 import * as fs from 'fs-extra';
-import axios from 'axios';
-import FormData from 'form-data';
-import * as https from 'https';
 import type { Message } from 'telegraf/typings/core/types/typegram';
 import {
   getArenaDisplayName,
@@ -26,7 +23,6 @@ import {
   setCachedFile,
   type CachedFileRecord,
 } from '../../core/fileCache';
-import { config } from '../../core/config';
 
 type TelegramUploadType = 'document' | 'video';
 
@@ -43,8 +39,6 @@ interface UploadResult {
   type: TelegramUploadType;
 }
 
-const telegramAgent = new https.Agent({ keepAlive: false });
-
 async function getFileSize(filePath: string): Promise<number> {
   try {
     const stats = await fs.stat(filePath);
@@ -55,12 +49,11 @@ async function getFileSize(filePath: string): Promise<number> {
   }
 }
 
-async function uploadToTelegram(options: UploadOptions): Promise<Message.DocumentMessage | Message.VideoMessage> {
+async function uploadToTelegram(
+  ctx: Context,
+  options: UploadOptions
+): Promise<Message.DocumentMessage | Message.VideoMessage> {
   const { chatId, filePath, fileName, replyToMessageId, type } = options;
-  if (!config.BOT_TOKEN) {
-    throw new AppError('ERR_TELEGRAM_UPLOAD', 'BOT_TOKEN is not configured');
-  }
-
   const sizeBytes = await getFileSize(filePath);
   const start = Date.now();
   const startIso = new Date(start).toISOString();
@@ -76,33 +69,34 @@ async function uploadToTelegram(options: UploadOptions): Promise<Message.Documen
     'Telegram upload started'
   );
 
-  const apiMethod = type === 'document' ? 'sendDocument' : 'sendVideo';
-  const form = new FormData();
-  form.append('chat_id', String(chatId));
-  form.append('allow_sending_without_reply', 'true');
-  if (replyToMessageId) {
-    form.append('reply_parameters', JSON.stringify({ message_id: replyToMessageId }));
-  }
-  if (type === 'video') {
-    form.append('supports_streaming', 'true');
-    form.append('video', fs.createReadStream(filePath), { filename: fileName });
-  } else {
-    form.append('document', fs.createReadStream(filePath), { filename: fileName });
-  }
-
-  const url = `https://api.telegram.org/bot${config.BOT_TOKEN}/${apiMethod}`;
-
   try {
-    const response = await axios.post(url, form, {
-      headers: form.getHeaders(),
-      maxBodyLength: Infinity,
-      timeout: 120000,
-      httpsAgent: telegramAgent,
-    });
-
-    if (!response.data || response.data.ok !== true || !response.data.result) {
-      throw new Error(`Unexpected Telegram response: ${JSON.stringify(response.data)}`);
-    }
+    const result =
+      type === 'video'
+        ? await ctx.replyWithVideo(
+            { source: filePath, filename: fileName },
+            {
+              supports_streaming: true,
+              ...(typeof replyToMessageId === 'number'
+                ? {
+                    reply_parameters: {
+                      message_id: replyToMessageId,
+                    },
+                  }
+                : {}),
+            }
+          )
+        : await ctx.replyWithDocument(
+            { source: filePath, filename: fileName },
+            {
+              ...(typeof replyToMessageId === 'number'
+                ? {
+                    reply_parameters: {
+                      message_id: replyToMessageId,
+                    },
+                  }
+                : {}),
+            }
+          );
 
     const finish = Date.now();
     logger.info(
@@ -119,7 +113,7 @@ async function uploadToTelegram(options: UploadOptions): Promise<Message.Documen
       '✅ Telegram upload success'
     );
 
-    return response.data.result as Message.DocumentMessage | Message.VideoMessage;
+    return result as Message.DocumentMessage | Message.VideoMessage;
   } catch (error) {
     const finish = Date.now();
     logger.error(
@@ -136,6 +130,15 @@ async function uploadToTelegram(options: UploadOptions): Promise<Message.Documen
       },
       '❌ Telegram upload failed'
     );
+    if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+      throw new AppError('ERR_TELEGRAM_TIMEOUT', 'Telegram upload timed out', {
+        chatId,
+        filePath,
+        fileName,
+        sizeBytes,
+        type,
+      });
+    }
     throw error;
   }
 }
@@ -159,14 +162,14 @@ async function sendFileWithFallback(
   }
 
   try {
-    const message = await uploadToTelegram({
+    const message = await uploadToTelegram(ctx, {
       ...baseOptions,
       type: 'document',
     });
     return { message: message as Message.DocumentMessage, type: 'document' };
   } catch (error) {
     logger.warn({ error }, 'Retrying Telegram upload as video');
-    const message = await uploadToTelegram({
+    const message = await uploadToTelegram(ctx, {
       ...baseOptions,
       type: 'video',
     });
