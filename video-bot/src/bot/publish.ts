@@ -13,6 +13,7 @@ export interface PublishCandidate {
   fileId: string;
   fileName?: string;
   originalUrl?: string;
+  fileType?: 'document' | 'video';
   createdAt: number;
 }
 
@@ -21,6 +22,7 @@ interface PublishCandidateOptions {
   fileId: string;
   fileName?: string;
   originalUrl?: string;
+  fileType?: 'document' | 'video';
 }
 
 const candidates = new Map<string, PublishCandidate>();
@@ -113,11 +115,20 @@ export async function publishCandidateToken(
 
   try {
     const caption = buildCaptionText(candidate.originalUrl);
-    await telegram.sendDocument(config.ARENA_CHANNEL_ID, candidate.fileId, {
-      caption,
-      parse_mode: 'HTML',
-      disable_notification: false,
-    });
+    if (candidate.fileType === 'video') {
+      await telegram.sendVideo(config.ARENA_CHANNEL_ID, candidate.fileId, {
+        caption,
+        parse_mode: 'HTML',
+        disable_notification: false,
+        supports_streaming: true,
+      });
+    } else {
+      await telegram.sendDocument(config.ARENA_CHANNEL_ID, candidate.fileId, {
+        caption,
+        parse_mode: 'HTML',
+        disable_notification: false,
+      });
+    }
     removePublishCandidate(token);
     trackUserEvent('arena.publish_attempt', requester?.id, {
       success: true,

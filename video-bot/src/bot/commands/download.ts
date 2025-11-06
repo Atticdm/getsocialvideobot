@@ -8,7 +8,11 @@ import { toUserMessage, AppError } from '../../core/errors';
 import { logger } from '../../core/logger';
 import { trackUserEvent } from '../../core/analytics';
 import * as path from 'path';
-import type { Document as TelegramDocument } from 'telegraf/typings/core/types/typegram';
+import * as fs from 'fs-extra';
+import axios from 'axios';
+import FormData from 'form-data';
+import * as https from 'https';
+import type { Message } from 'telegraf/typings/core/types/typegram';
 import {
   getArenaDisplayName,
   isArenaPublishingEnabled,
@@ -22,6 +26,153 @@ import {
   setCachedFile,
   type CachedFileRecord,
 } from '../../core/fileCache';
+import { config } from '../../core/config';
+
+type TelegramUploadType = 'document' | 'video';
+
+interface UploadOptions {
+  chatId: number;
+  filePath: string;
+  fileName: string;
+  replyToMessageId?: number;
+  type: TelegramUploadType;
+}
+
+interface UploadResult {
+  message: Message.DocumentMessage | Message.VideoMessage;
+  type: TelegramUploadType;
+}
+
+const telegramAgent = new https.Agent({ keepAlive: false });
+
+async function getFileSize(filePath: string): Promise<number> {
+  try {
+    const stats = await fs.stat(filePath);
+    return stats.size;
+  } catch (error) {
+    logger.warn({ error, filePath }, 'Failed to stat file for upload');
+    return 0;
+  }
+}
+
+async function uploadToTelegram(options: UploadOptions): Promise<Message.DocumentMessage | Message.VideoMessage> {
+  const { chatId, filePath, fileName, replyToMessageId, type } = options;
+  if (!config.BOT_TOKEN) {
+    throw new AppError('ERR_TELEGRAM_UPLOAD', 'BOT_TOKEN is not configured');
+  }
+
+  const sizeBytes = await getFileSize(filePath);
+  const start = Date.now();
+  const startIso = new Date(start).toISOString();
+  logger.info(
+    {
+      chatId,
+      filePath,
+      fileName,
+      sizeBytes,
+      type,
+      startedAt: startIso,
+    },
+    'Telegram upload started'
+  );
+
+  const apiMethod = type === 'document' ? 'sendDocument' : 'sendVideo';
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('allow_sending_without_reply', 'true');
+  if (replyToMessageId) {
+    form.append('reply_parameters', JSON.stringify({ message_id: replyToMessageId }));
+  }
+  if (type === 'video') {
+    form.append('supports_streaming', 'true');
+    form.append('video', fs.createReadStream(filePath), { filename: fileName });
+  } else {
+    form.append('document', fs.createReadStream(filePath), { filename: fileName });
+  }
+
+  const url = `https://api.telegram.org/bot${config.BOT_TOKEN}/${apiMethod}`;
+
+  try {
+    const response = await axios.post(url, form, {
+      headers: form.getHeaders(),
+      maxBodyLength: Infinity,
+      timeout: 120000,
+      httpsAgent: telegramAgent,
+    });
+
+    if (!response.data || response.data.ok !== true || !response.data.result) {
+      throw new Error(`Unexpected Telegram response: ${JSON.stringify(response.data)}`);
+    }
+
+    const finish = Date.now();
+    logger.info(
+      {
+        chatId,
+        filePath,
+        fileName,
+        sizeBytes,
+        type,
+        startedAt: startIso,
+        finishedAt: new Date(finish).toISOString(),
+        durationMs: finish - start,
+      },
+      '✅ Telegram upload success'
+    );
+
+    return response.data.result as Message.DocumentMessage | Message.VideoMessage;
+  } catch (error) {
+    const finish = Date.now();
+    logger.error(
+      {
+        chatId,
+        filePath,
+        fileName,
+        sizeBytes,
+        type,
+        startedAt: startIso,
+        finishedAt: new Date(finish).toISOString(),
+        durationMs: finish - start,
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      },
+      '❌ Telegram upload failed'
+    );
+    throw error;
+  }
+}
+
+async function sendFileWithFallback(
+  ctx: Context,
+  params: { filePath: string; fileName: string; replyToMessageId?: number }
+): Promise<UploadResult> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) {
+    throw new AppError('ERR_TELEGRAM_UPLOAD', 'Unable to determine chat id for upload');
+  }
+
+  const baseOptions: Omit<UploadOptions, 'type'> & { type?: TelegramUploadType } = {
+    chatId,
+    filePath: params.filePath,
+    fileName: params.fileName,
+  };
+  if (typeof params.replyToMessageId === 'number') {
+    baseOptions.replyToMessageId = params.replyToMessageId;
+  }
+
+  try {
+    const message = await uploadToTelegram({
+      ...baseOptions,
+      type: 'document',
+    });
+    return { message: message as Message.DocumentMessage, type: 'document' };
+  } catch (error) {
+    logger.warn({ error }, 'Retrying Telegram upload as video');
+    const message = await uploadToTelegram({
+      ...baseOptions,
+      type: 'video',
+    });
+    return { message: message as Message.VideoMessage, type: 'video' };
+  }
+}
 
 export async function downloadCommand(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -77,15 +228,21 @@ export async function downloadCommand(ctx: Context): Promise<void> {
     const cachedRecord = await getCachedFile(normalizedUrl);
 
     const persistCache = async (
-      document: TelegramDocument | undefined,
+      message: Message.DocumentMessage | Message.VideoMessage | undefined,
       durationSeconds?: number,
       sizeBytes?: number
     ): Promise<void> => {
-      if (!document?.file_id || !document.file_unique_id) return;
+      if (!message) return;
+      const document = 'document' in message ? message.document : undefined;
+      const video = 'video' in message ? message.video : undefined;
+      const fileId = video?.file_id ?? document?.file_id;
+      const uniqueId = video?.file_unique_id ?? document?.file_unique_id;
+      if (!fileId || !uniqueId) return;
+
       const record: CachedFileRecord = {
-        fileId: document.file_id,
-        uniqueId: document.file_unique_id,
-        type: 'document',
+        fileId,
+        uniqueId,
+        type: video ? 'video' : 'document',
         storedAt: Date.now(),
       };
       if (providerName) {
@@ -94,7 +251,8 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       if (typeof durationSeconds === 'number') {
         record.durationSeconds = durationSeconds;
       }
-      const resolvedSize = typeof sizeBytes === 'number' ? sizeBytes : document.file_size;
+      const resolvedSize =
+        typeof sizeBytes === 'number' ? sizeBytes : video?.file_size ?? document?.file_size;
       if (typeof resolvedSize === 'number') {
         record.sizeBytes = resolvedSize;
       }
@@ -109,22 +267,29 @@ export async function downloadCommand(ctx: Context): Promise<void> {
 
     if (cachedRecord && !shouldAutoPublish) {
       try {
-        const sentMessage = await ctx.replyWithDocument(
-          cachedRecord.fileId,
-          {
-            reply_parameters: {
-              message_id: processingMessage.message_id,
-            },
-          }
-        );
+        const cacheStart = Date.now();
+        const sentMessage = cachedRecord.type === 'video'
+          ? await ctx.replyWithVideo(cachedRecord.fileId, {
+              supports_streaming: true,
+              reply_parameters: {
+                message_id: processingMessage.message_id,
+              },
+            })
+          : await ctx.replyWithDocument(cachedRecord.fileId, {
+              reply_parameters: {
+                message_id: processingMessage.message_id,
+              },
+            });
 
         const document = 'document' in sentMessage ? sentMessage.document : undefined;
-
+        const video = 'video' in sentMessage ? sentMessage.video : undefined;
         logger.info('Video sent from cache', {
           userId,
           url,
-          fileId: document?.file_id,
           provider: providerName,
+          fileId: video?.file_id ?? document?.file_id,
+          cachedType: cachedRecord.type,
+          durationMs: Date.now() - cacheStart,
         });
 
         trackUserEvent('download.succeeded', userId, {
@@ -132,19 +297,22 @@ export async function downloadCommand(ctx: Context): Promise<void> {
           durationSeconds: cachedRecord.durationSeconds,
           sizeBytes: cachedRecord.sizeBytes,
           cached: true,
+          uploadType: cachedRecord.type,
         });
 
         if (publishStateBefore && publishStateBefore.publishToArena !== undefined) {
           publishStateBefore.publishToArena = undefined;
         }
 
-        await persistCache(document, cachedRecord.durationSeconds, cachedRecord.sizeBytes);
+        await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, cachedRecord.durationSeconds, cachedRecord.sizeBytes);
 
-        if (isArenaPublishingEnabled() && userId && document?.file_id) {
+        const cachedFileId = video?.file_id ?? document?.file_id;
+        const cachedUniqueId = video?.file_unique_id ?? document?.file_unique_id;
+        if (isArenaPublishingEnabled() && userId && cachedFileId && cachedUniqueId) {
           const token = registerPublishCandidate({
             ownerId: userId,
-            fileId: document.file_id,
-            fileName: document.file_name ?? `video_${document.file_unique_id}.mp4`,
+            fileId: cachedFileId,
+            fileName: document?.file_name ?? `video_${cachedUniqueId}.mp4`,
             originalUrl: url,
           });
 
@@ -191,12 +359,6 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       }
 
       const fileName = path.basename(result.filePath);
-      trackUserEvent('download.succeeded', userId, {
-        provider: providerName,
-        durationSeconds: result.videoInfo?.duration,
-        sizeBytes: result.videoInfo?.size,
-        cached: false,
-      });
 
       if (shouldAutoPublishDownload) {
         if (!isArenaPublishingEnabled()) {
@@ -227,32 +389,41 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       }
 
       // Send file to user
-      const sentMessage = await ctx.replyWithDocument(
-        { source: result.filePath, filename: fileName },
-        {
-          reply_parameters: {
-            message_id: processingMessage.message_id,
-          },
-        }
-      );
+      const uploadResult = await sendFileWithFallback(ctx, {
+        filePath: result.filePath,
+        fileName,
+        replyToMessageId: processingMessage.message_id,
+      });
+      const sentMessage = uploadResult.message;
 
       logger.info('Video sent successfully', {
         userId,
         url,
         filePath: result.filePath,
         videoInfo: result.videoInfo,
+        uploadType: uploadResult.type,
+      });
+
+      trackUserEvent('download.succeeded', userId, {
+        provider: providerName,
+        durationSeconds: result.videoInfo?.duration,
+        sizeBytes: result.videoInfo?.size,
+        cached: false,
+        uploadType: uploadResult.type,
       });
 
       if (isArenaPublishingEnabled() && userId) {
         const document = 'document' in sentMessage ? sentMessage.document : undefined;
-        const fileId = document?.file_id;
+        const video = 'video' in sentMessage ? sentMessage.video : undefined;
+        const fileId = video?.file_id ?? document?.file_id;
         if (fileId) {
-          await persistCache(document, result.videoInfo?.duration, result.videoInfo?.size ?? document?.file_size);
+          await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size ?? video?.file_size ?? document?.file_size);
 
           const token = registerPublishCandidate({
             ownerId: userId,
             fileId,
             fileName,
+            fileType: uploadResult.type,
             originalUrl: url,
           });
 
@@ -262,6 +433,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
           );
           trackUserEvent('download.publish_prompt', userId, {
             provider: providerName,
+            uploadType: uploadResult.type,
           });
         } else {
           logger.warn(
@@ -270,8 +442,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
           );
         }
       } else {
-        const document = 'document' in sentMessage ? sentMessage.document : undefined;
-        await persistCache(document, result.videoInfo?.duration, result.videoInfo?.size ?? document?.file_size);
+        await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size);
       }
 
     } finally {
