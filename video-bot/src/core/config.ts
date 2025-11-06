@@ -19,6 +19,7 @@ const configSchema = z.object({
   REDIS_URL: z.string().optional().default(''),
   CACHE_PREFIX: z.string().optional().default('yeet:'),
   CACHE_TTL_SECONDS: z.coerce.number().positive().optional().default(3600),
+  POSTHOG_ENABLED: z.union([z.boolean(), z.string()]).optional(),
   POSTHOG_API_KEY: z.string().optional().default(''),
   POSTHOG_HOST: z.string().optional().default('https://us.i.posthog.com'),
   // Optional: base64-encoded Netscape cookies.txt for Facebook
@@ -72,8 +73,17 @@ let appConfig: Config;
 
 try {
   const parsed = configSchema.parse(process.env);
+  const rawPosthogEnabled = parsed.POSTHOG_ENABLED;
+  const posthogEnabled =
+    typeof rawPosthogEnabled === 'boolean'
+      ? rawPosthogEnabled
+      : rawPosthogEnabled === undefined || rawPosthogEnabled.trim().length === 0
+        ? true
+        : !['0', 'false', 'off', 'no'].includes(rawPosthogEnabled.trim().toLowerCase());
+
   appConfig = {
     ...parsed,
+    POSTHOG_ENABLED: posthogEnabled,
     YOUTUBE_GEO_COUNTRIES_LIST: parseCountryList(parsed.YOUTUBE_GEO_COUNTRIES),
   };
   if (appConfig.APP_MODE === 'bot' && (!appConfig.BOT_TOKEN || appConfig.BOT_TOKEN.length === 0)) {
