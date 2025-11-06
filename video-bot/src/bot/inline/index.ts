@@ -6,7 +6,6 @@ import { makeSessionDir, safeRemove } from '../../core/fs';
 import { ensureBelowLimit } from '../../core/size';
 import { config } from '../../core/config';
 import { uploadToTempServer, isTempServerConfigured } from '../../core/tempServer';
-import { prepareVideoForDelivery } from '../../core/media';
 import * as path from 'path';
 
 const INLINE_ID_PREFIX = 'dl_';
@@ -84,9 +83,7 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
           try {
             const provider = getProvider(providerName);
             const download = await provider.download(url, sessionDir);
-            const preparation = await prepareVideoForDelivery(download.filePath);
-            const finalFilePath = preparation.filePath;
-            await ensureBelowLimit(finalFilePath);
+            await ensureBelowLimit(download.filePath);
 
             let thumbUrl: string | undefined;
             try {
@@ -100,18 +97,18 @@ async function handleInlineQuery(ctx: InlineCtx): Promise<void> {
             let videoUrl: string;
             if (isTempServerConfigured()) {
               try {
-                const uploadResult = await uploadToTempServer(finalFilePath);
+                const uploadResult = await uploadToTempServer(download.filePath);
                 videoUrl = uploadResult.fullUrl;
                 logger.info({ videoUrl, fileName: uploadResult.fileName }, 'File uploaded to temp-server for inline');
               } catch (uploadError) {
                 logger.error({ uploadError, url }, 'Failed to upload to temp-server, falling back to local URL');
                 // Fallback to local URL if upload fails
-                const fileName = path.basename(finalFilePath);
+                const fileName = path.basename(download.filePath);
                 videoUrl = `${baseUrl}/tmp/${encodeURIComponent(fileName)}`;
               }
             } else {
               // Используем локальный URL если temp-server не настроен
-              const fileName = path.basename(finalFilePath);
+              const fileName = path.basename(download.filePath);
               videoUrl = `${baseUrl}/tmp/${encodeURIComponent(fileName)}`;
             }
 
@@ -171,13 +168,11 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
   try {
     const provider = getProvider(providerName);
     const download = await provider.download(url, sessionDir);
-    const preparation = await prepareVideoForDelivery(download.filePath);
-    const finalFilePath = preparation.filePath;
-    await ensureBelowLimit(finalFilePath);
+    await ensureBelowLimit(download.filePath);
 
     let fileId: string | undefined;
     try {
-      const sent = await ctx.telegram.sendVideo(from.id, { source: finalFilePath }, { disable_notification: true });
+      const sent = await ctx.telegram.sendVideo(from.id, { source: download.filePath }, { disable_notification: true });
       fileId = sent.video?.file_id;
     } catch (error) {
       logger.warn({ error, userId: from.id }, 'Failed to DM video to user');
@@ -200,7 +195,7 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
 
       if (isTempServerConfigured()) {
         try {
-          const uploadResult = await uploadToTempServer(finalFilePath);
+          const uploadResult = await uploadToTempServer(download.filePath);
           httpUrl = uploadResult.fullUrl;
           logger.info({ httpUrl, userId: from.id }, 'File uploaded to temp-server for inline result');
         } catch (uploadError) {
@@ -208,13 +203,13 @@ async function handleChosenInlineResult(ctx: ChosenCtx): Promise<void> {
           // Fallback to local URL
           const base = config.TEMP_SERVER_URL || config.PUBLIC_URL || '';
           if (base) {
-            httpUrl = `${base.replace(/\/$/, '')}/tmp/${path.basename(finalFilePath)}`;
+            httpUrl = `${base.replace(/\/$/, '')}/tmp/${path.basename(download.filePath)}`;
           }
         }
       } else {
         const base = config.TEMP_SERVER_URL || config.PUBLIC_URL || '';
         httpUrl = base
-          ? `${base.replace(/\/$/, '')}/tmp/${path.basename(finalFilePath)}`
+          ? `${base.replace(/\/$/, '')}/tmp/${path.basename(download.filePath)}`
           : undefined;
       }
 

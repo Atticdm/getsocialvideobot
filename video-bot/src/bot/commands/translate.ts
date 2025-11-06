@@ -18,7 +18,6 @@ import { translationIntents } from '../telegraf';
 import { mainKeyboard } from '../../ui/keyboard';
 import { VoicePreset } from '../../types/voice';
 import { trackUserEvent } from '../../core/analytics';
-import { prepareVideoForDelivery } from '../../core/media';
 
 const stageLabels: Record<TranslationStage['name'], string> = {
   download: 'Скачиваю видео',
@@ -194,13 +193,11 @@ export async function translateCommand(ctx: Context): Promise<void> {
         stageObserver
       );
 
-      const preparation = await prepareVideoForDelivery(result.videoPath);
-      const finalVideoPath = preparation.filePath;
-      await ensureBelowLimit(finalVideoPath);
+      await ensureBelowLimit(result.videoPath);
 
       const fileName = path.basename(result.videoPath);
       await ctx.replyWithDocument(
-        { source: finalVideoPath, filename: fileName },
+        { source: result.videoPath, filename: fileName },
         statusMessageId
           ? {
               reply_parameters: {
@@ -215,7 +212,6 @@ export async function translateCommand(ctx: Context): Promise<void> {
         mode,
         voicePreset: result.voicePreset ?? voicePreset,
         stages: result.stages.length,
-        sizeBytes: preparation.sizeAfter,
       });
 
       if (statusMessageId) {

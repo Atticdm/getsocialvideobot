@@ -22,7 +22,6 @@ import {
   setCachedFile,
   type CachedFileRecord,
 } from '../../core/fileCache';
-import { prepareVideoForDelivery } from '../../core/media';
 
 export async function downloadCommand(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -182,12 +181,8 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       const provider = getProvider(providerName);
       const result = await provider.download(url, sessionDir);
 
-      const preparation = await prepareVideoForDelivery(result.filePath);
-      const finalFilePath = preparation.filePath;
-      const finalFileName = path.basename(result.filePath);
-
       // Check file size
-      await ensureBelowLimit(finalFilePath);
+      await ensureBelowLimit(result.filePath);
 
       const publishState = ctx.state as { publishToArena?: boolean | undefined };
       const shouldAutoPublishDownload = Boolean(publishState?.publishToArena);
@@ -195,15 +190,11 @@ export async function downloadCommand(ctx: Context): Promise<void> {
         publishState.publishToArena = undefined;
       }
 
-      const videoInfo = {
-        ...result.videoInfo,
-        size: preparation.sizeAfter,
-      };
-
+      const fileName = path.basename(result.filePath);
       trackUserEvent('download.succeeded', userId, {
         provider: providerName,
-        durationSeconds: videoInfo?.duration,
-        sizeBytes: preparation.sizeAfter,
+        durationSeconds: result.videoInfo?.duration,
+        sizeBytes: result.videoInfo?.size,
         cached: false,
       });
 
@@ -217,8 +208,8 @@ export async function downloadCommand(ctx: Context): Promise<void> {
           await ctx.reply('⚙️ Публикация в канал временно недоступна. Попробуйте позже.');
         } else {
           const published = await publishFileDirectlyToArena({
-            filePath: finalFilePath,
-            fileName: finalFileName,
+            filePath: result.filePath,
+            fileName,
             originalUrl: url,
             telegram: ctx.telegram,
           });
@@ -229,7 +220,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
           if (published) {
             await ctx.reply(`📣 Видео опубликовано в ${getArenaDisplayName()}!`);
           } else {
-          await ctx.reply('⚠️ Не удалось опубликовать видео в канал. Попробуйте позже.');
+            await ctx.reply('⚠️ Не удалось опубликовать видео в канал. Попробуйте позже.');
           }
         }
         return;
@@ -237,7 +228,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
 
       // Send file to user
       const sentMessage = await ctx.replyWithDocument(
-        { source: finalFilePath, filename: finalFileName },
+        { source: result.filePath, filename: fileName },
         {
           reply_parameters: {
             message_id: processingMessage.message_id,
@@ -248,23 +239,20 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       logger.info('Video sent successfully', {
         userId,
         url,
-        filePath: finalFilePath,
-        videoInfo,
-        sizeBefore: preparation.sizeBefore,
-        sizeAfter: preparation.sizeAfter,
-        reencoded: !preparation.usedOriginal,
+        filePath: result.filePath,
+        videoInfo: result.videoInfo,
       });
 
       if (isArenaPublishingEnabled() && userId) {
         const document = 'document' in sentMessage ? sentMessage.document : undefined;
         const fileId = document?.file_id;
         if (fileId) {
-          await persistCache(document, videoInfo?.duration, preparation.sizeAfter);
+          await persistCache(document, result.videoInfo?.duration, result.videoInfo?.size ?? document?.file_size);
 
           const token = registerPublishCandidate({
             ownerId: userId,
             fileId,
-            fileName: finalFileName,
+            fileName,
             originalUrl: url,
           });
 
@@ -283,7 +271,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
         }
       } else {
         const document = 'document' in sentMessage ? sentMessage.document : undefined;
-        await persistCache(document, videoInfo?.duration, preparation.sizeAfter);
+        await persistCache(document, result.videoInfo?.duration, result.videoInfo?.size ?? document?.file_size);
       }
 
     } finally {
