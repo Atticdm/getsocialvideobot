@@ -24,15 +24,20 @@ function mapYtDlpError(stderr: string): string {
   const s = stderr.toLowerCase();
   // More specific error patterns to avoid false positives
   // Check for actual error messages, not just keywords that might appear in progress output
+  // Look for error: prefix or specific error patterns
+  const hasErrorPrefix = s.includes('error:') || s.includes('err:');
+  
   if (
-    s.includes('private video') ||
-    s.includes('video is private') ||
+    (hasErrorPrefix && (s.includes('private video') || s.includes('video is private'))) ||
     s.includes('login required') ||
     s.includes('sign in to') ||
     s.includes('only available to') ||
     s.includes('this video is not available') ||
     s.includes('content is not available') ||
-    (s.includes('private') && (s.includes('account') || s.includes('user') || s.includes('post')))
+    s.includes('private account') ||
+    s.includes('private user') ||
+    s.includes('private post') ||
+    (hasErrorPrefix && s.includes('private') && (s.includes('account') || s.includes('user') || s.includes('post')))
   ) {
     return ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED;
   }
@@ -204,21 +209,70 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
       }
     }
 
+    // Final check: maybe file was downloaded in the last attempt but we missed it
+    const finalFilePath = await findDownloadedFile(outDir);
+    if (finalFilePath) {
+      logger.info('Found file after all attempts (instagram)', { filePath: finalFilePath, url });
+      const videoInfo = parseVideoInfoFromPath(finalFilePath, url);
+      return { filePath: finalFilePath, videoInfo };
+    }
+
     const stderrPreview = (last?.stderr || '').slice(0, 1200);
     const stdoutPreview = (last?.stdout || '').slice(0, 400);
-    logger.error('All yt-dlp attempts failed (instagram)', {
-      url,
-      normalizedUrl,
-      stderrPreview,
-      stdoutPreview,
-      attemptsCount: attempts.length,
-      lastExitCode: last?.code,
+    
+    // Log directory contents for debugging
+    try {
+      const dirContents = await fs.readdir(outDir);
+      logger.error('All yt-dlp attempts failed (instagram)', {
+        url,
+        normalizedUrl,
+        stderrPreview,
+        stdoutPreview,
+        attemptsCount: attempts.length,
+        lastExitCode: last?.code,
+        outDirContents: dirContents,
+      });
+    } catch {
+      logger.error('All yt-dlp attempts failed (instagram)', {
+        url,
+        normalizedUrl,
+        stderrPreview,
+        stdoutPreview,
+        attemptsCount: attempts.length,
+        lastExitCode: last?.code,
+      });
+    }
+    
+    // Log full stderr/stdout for troubleshooting (always log in case of failure)
+    logger.error('Full yt-dlp stderr (instagram)', { 
+      stderr: last?.stderr || '',
+      stderrLength: (last?.stderr || '').length 
+    });
+    logger.error('Full yt-dlp stdout (instagram)', { 
+      stdout: last?.stdout || '',
+      stdoutLength: (last?.stdout || '').length 
     });
     
-    // Log full stderr in debug mode for troubleshooting
-    if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') {
-      logger.debug('Full yt-dlp stderr (instagram)', { stderr: last?.stderr });
-      logger.debug('Full yt-dlp stdout (instagram)', { stdout: last?.stdout });
+    // Analyze stderr more carefully before mapping error
+    const stderrText = (last?.stderr || '').toLowerCase();
+    const hasActualError = stderrText.includes('error:') || 
+                          stderrText.includes('warning:') ||
+                          stderrText.includes('fatal:') ||
+                          last?.code !== 0;
+    
+    if (!hasActualError && last?.code === 0) {
+      // Exit code is 0 but no file found - this is a different error
+      logger.error('yt-dlp succeeded but no file found (instagram)', {
+        url,
+        outDir,
+        stderr: last?.stderr,
+        stdout: last?.stdout,
+      });
+      throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Download completed but file not found', { 
+        url, 
+        stderr: last?.stderr, 
+        stdout: last?.stdout 
+      });
     }
     
     throw new AppError(mapYtDlpError(last?.stderr || ''), 'yt-dlp download failed', { url, stderr: last?.stderr, stdout: last?.stdout, code: last?.code });
