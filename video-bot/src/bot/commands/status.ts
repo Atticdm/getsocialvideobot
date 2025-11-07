@@ -4,6 +4,61 @@ import { getFreeDiskSpace } from '../../core/fs';
 import { logger } from '../../core/logger';
 import { config } from '../../core/config';
 import { trackUserEvent } from '../../core/analytics';
+import * as path from 'path';
+import * as fs from 'fs-extra';
+
+async function getGitCommit(): Promise<string> {
+  try {
+    // Try to find git directory - check common locations
+    const possibleGitDirs = [
+      path.join(__dirname, '../../../../.git'),
+      path.join(__dirname, '../../../.git'),
+      path.join(process.cwd(), '.git'),
+      '/opt/getsocialvideobot/.git',
+    ];
+
+    let gitDir: string | null = null;
+    for (const dir of possibleGitDirs) {
+      try {
+        if (await fs.pathExists(dir)) {
+          gitDir = dir;
+          break;
+        }
+      } catch {
+        // Continue searching
+      }
+    }
+
+    if (!gitDir) {
+      return 'N/A (not a git repo)';
+    }
+
+    // Get current commit hash
+    const commitResult = await run('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: path.dirname(gitDir),
+      timeout: 5000,
+    });
+
+    if (commitResult.code !== 0) {
+      return 'N/A (git error)';
+    }
+
+    const commitHash = commitResult.stdout.trim();
+
+    // Try to get commit message (first line)
+    const logResult = await run('git', ['log', '-1', '--pretty=format:%s'], {
+      cwd: path.dirname(gitDir),
+      timeout: 5000,
+    });
+
+    const commitMessage = logResult.code === 0 ? logResult.stdout.trim().slice(0, 50) : '';
+
+    return commitMessage ? `${commitHash} (${commitMessage})` : commitHash;
+  } catch (error) {
+    logger.warn('Failed to get git commit info', { error });
+    return 'N/A';
+  }
+}
 
 export async function statusCommand(ctx: Context): Promise<void> {
   try {
@@ -15,6 +70,7 @@ export async function statusCommand(ctx: Context): Promise<void> {
     
     const version = process.env['npm_package_version'] || '1.0.0';
     const uptime = formatUptime(process.uptime());
+    const gitCommit = await getGitCommit();
     
     // Check yt-dlp
     let ytdlpStatus = '❌ Not found';
@@ -50,6 +106,7 @@ export async function statusCommand(ctx: Context): Promise<void> {
     const message = `🔧 **Bot Status**
 
 **Version:** ${version}
+**Git commit:** \`${gitCommit}\`
 **yt-dlp:** ${ytdlpStatus}
 **ffmpeg:** ${ffmpegStatus}
 **Free disk space:** ${diskSpace}
