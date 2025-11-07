@@ -113,9 +113,10 @@ async function uploadToTelegram(
         : await ctx.replyWithDocument(
             { source: filePath, filename: fileName },
             {
+              supports_streaming: true,
               ...(thumbnailPath ? { thumb: { source: thumbnailPath } } : {}),
               ...replyParameters,
-            } as Parameters<Context['replyWithDocument']>[1]
+            } as any
           );
 
     const finish = Date.now();
