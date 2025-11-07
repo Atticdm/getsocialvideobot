@@ -180,33 +180,30 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
       if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (instagram)', { args });
       const result = await run('yt-dlp', args, { timeout: 300000 });
       last = result;
-      
-      // Check if file was downloaded even if exit code is non-zero
-      // Sometimes yt-dlp returns non-zero but still downloads the file
-      const filePath = await findDownloadedFile(outDir);
-      if (filePath) {
-        const videoInfo = parseVideoInfoFromPath(filePath, a.target);
-        logger.info('Instagram video downloaded successfully', { url: a.target, filePath, videoInfo, exitCode: result.code });
-        return { filePath, videoInfo };
-      }
-      
-      // If no file found and exit code is non-zero, log the error
-      if (result.code !== 0) {
-        logger.warn('yt-dlp attempt failed (instagram)', {
-          attempt: i + 1,
-          code: result.code,
-          stderrPreview: (result.stderr || '').slice(0, 500),
-          stdoutPreview: (result.stdout || '').slice(0, 200),
-        });
-      } else {
-        // Exit code is 0 but no file found - this is unusual
+
+      if (result.code === 0) {
+        const filePath = await findDownloadedFile(outDir);
+        if (filePath) {
+          const videoInfo = parseVideoInfoFromPath(filePath, a.target);
+          logger.info('Instagram video downloaded successfully', { url: a.target, filePath, videoInfo, exitCode: result.code });
+          return { filePath, videoInfo };
+        }
+
         logger.warn('yt-dlp returned success but no file found (instagram)', {
           attempt: i + 1,
           outDir,
           stderrPreview: (result.stderr || '').slice(0, 500),
           stdoutPreview: (result.stdout || '').slice(0, 200),
         });
+        continue;
       }
+
+      logger.warn('yt-dlp attempt failed (instagram)', {
+        attempt: i + 1,
+        code: result.code,
+        stderrPreview: (result.stderr || '').slice(0, 500),
+        stdoutPreview: (result.stdout || '').slice(0, 200),
+      });
     }
 
     // Final check: maybe file was downloaded in the last attempt but we missed it

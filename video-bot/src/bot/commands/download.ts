@@ -164,16 +164,16 @@ async function sendFileWithFallback(
   try {
     const message = await uploadToTelegram(ctx, {
       ...baseOptions,
-      type: 'document',
-    });
-    return { message: message as Message.DocumentMessage, type: 'document' };
-  } catch (error) {
-    logger.warn({ error }, 'Retrying Telegram upload as video');
-    const message = await uploadToTelegram(ctx, {
-      ...baseOptions,
       type: 'video',
     });
     return { message: message as Message.VideoMessage, type: 'video' };
+  } catch (error) {
+    logger.warn({ error }, 'Video upload failed, retrying as document');
+    const message = await uploadToTelegram(ctx, {
+      ...baseOptions,
+      type: 'document',
+    });
+    return { message: message as Message.DocumentMessage, type: 'document' };
   }
 }
 

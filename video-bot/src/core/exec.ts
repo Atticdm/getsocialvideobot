@@ -1,3 +1,4 @@
+import { execa } from 'execa';
 import { logger } from './logger';
 
 export interface ExecResult {
@@ -7,15 +8,6 @@ export interface ExecResult {
   durationMs: number;
 }
 
-let execaModulePromise: Promise<typeof import('execa')> | null = null;
-
-async function getExeca() {
-  if (!execaModulePromise) {
-    execaModulePromise = import('execa');
-  }
-  return execaModulePromise;
-}
-
 export async function run(
   command: string,
   args: string[] = [],
@@ -23,8 +15,6 @@ export async function run(
 ): Promise<ExecResult> {
   const startTime = Date.now();
 
-  const { execa } = await getExeca();
-  
   logger.debug('Executing command', { 
     command, 
     args, 
