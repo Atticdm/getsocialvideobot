@@ -22,16 +22,23 @@ jobs:
           echo "" >> ~/.ssh/deploy_key
           # Add host to known_hosts to avoid interactive prompt
           ssh-keyscan -H ${{ secrets.HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          # Test SSH connection
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${{ secrets.USER }}@${{ secrets.HOST }} "echo 'SSH connection successful'" || echo "SSH test failed"
 
       - name: Deploy to Droplet
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.HOST }} "
-          cd /opt/getsocialvideobot &&
-          git pull &&
-          cd video-bot &&
-          npm install &&
-          npm run build &&
-          pm2 restart video-bot --update-env &&
-          pm2 save
-          "
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=30 \
+            ${{ secrets.USER }}@${{ secrets.HOST }} << 'EOF'
+          set -e
+          cd /opt/getsocialvideobot || { echo "Directory /opt/getsocialvideobot not found"; exit 1; }
+          git pull || { echo "Git pull failed"; exit 1; }
+          cd video-bot || { echo "Directory video-bot not found"; exit 1; }
+          npm install || { echo "npm install failed"; exit 1; }
+          npm run build || { echo "npm build failed"; exit 1; }
+          pm2 restart video-bot --update-env || { echo "pm2 restart failed"; exit 1; }
+          pm2 save || { echo "pm2 save failed"; exit 1; }
+          echo "Deployment completed successfully"
+          EOF
 
