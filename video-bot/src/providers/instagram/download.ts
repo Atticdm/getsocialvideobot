@@ -22,16 +22,33 @@ function normalizeReelUrl(u: string): string {
 
 function mapYtDlpError(stderr: string): string {
   const s = stderr.toLowerCase();
-  if (s.includes('private') || s.includes('login') || s.includes('only available to')) {
+  // More specific error patterns to avoid false positives
+  // Check for actual error messages, not just keywords that might appear in progress output
+  if (
+    s.includes('private video') ||
+    s.includes('video is private') ||
+    s.includes('login required') ||
+    s.includes('sign in to') ||
+    s.includes('only available to') ||
+    s.includes('this video is not available') ||
+    s.includes('content is not available') ||
+    (s.includes('private') && (s.includes('account') || s.includes('user') || s.includes('post')))
+  ) {
     return ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED;
   }
-  if (s.includes('http error 4') || s.includes('429') || s.includes('rate limit')) {
+  if (s.includes('http error 4') || s.includes('429') || s.includes('rate limit') || s.includes('too many requests')) {
     return ERROR_CODES.ERR_FETCH_FAILED;
   }
-  if (s.includes('unsupported url') || s.includes('no video found') || s.includes('cannot parse')) {
+  if (
+    s.includes('unsupported url') ||
+    s.includes('no video found') ||
+    s.includes('cannot parse') ||
+    s.includes('unable to extract') ||
+    s.includes('video unavailable')
+  ) {
     return ERROR_CODES.ERR_UNSUPPORTED_URL;
   }
-  if (s.includes('geo') || s.includes('blocked')) {
+  if (s.includes('geo-blocked') || s.includes('not available in your country') || (s.includes('blocked') && s.includes('region'))) {
     return ERROR_CODES.ERR_GEO_BLOCKED;
   }
   return ERROR_CODES.ERR_INTERNAL;
@@ -51,18 +68,42 @@ function parseVideoInfoFromPath(filePath: string, url: string): VideoInfo {
 }
 
 async function findDownloadedFile(outDir: string): Promise<string | null> {
-  const files = await fs.readdir(outDir);
-  const candidates = files.filter((f) => ['.mp4', '.mkv', '.webm', '.avi', '.mov'].includes(path.extname(f).toLowerCase()));
-  if (candidates.length === 0) return null;
-  const stats = await Promise.all(
-    candidates.map(async (f) => {
-      const p = path.join(outDir, f);
-      const st = await fs.stat(p);
-      return { p, mtime: st.mtime };
-    })
-  );
-  stats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-  return stats[0]?.p || null;
+  try {
+    const files = await fs.readdir(outDir);
+    // Include more video formats and also check for partial downloads
+    const candidates = files.filter((f) => {
+      const ext = path.extname(f).toLowerCase();
+      return ['.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v'].includes(ext) && !f.endsWith('.part');
+    });
+    if (candidates.length === 0) {
+      logger.debug('No video files found in directory', { outDir, files });
+      return null;
+    }
+    const stats = await Promise.all(
+      candidates.map(async (f) => {
+        const p = path.join(outDir, f);
+        const st = await fs.stat(p);
+        return { p, mtime: st.mtime, size: st.size };
+      })
+    );
+    // Sort by modification time (newest first) and prefer larger files (likely complete downloads)
+    stats.sort((a, b) => {
+      const timeDiff = b.mtime.getTime() - a.mtime.getTime();
+      if (Math.abs(timeDiff) < 1000) {
+        // If files are created within 1 second, prefer larger one
+        return b.size - a.size;
+      }
+      return timeDiff;
+    });
+    const found = stats[0]?.p || null;
+    if (found) {
+      logger.debug('Found downloaded file', { filePath: found, size: stats[0]?.size });
+    }
+    return found;
+  } catch (error) {
+    logger.error('Error finding downloaded file', { error, outDir });
+    return null;
+  }
 }
 
 function createBaseArgs(outDir: string): string[] {
@@ -134,19 +175,52 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
       if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (instagram)', { args });
       const result = await run('yt-dlp', args, { timeout: 300000 });
       last = result;
-      if (result.code === 0) {
-        const filePath = await findDownloadedFile(outDir);
-        if (!filePath) throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Downloaded file not found', { url: a.target, outDir });
+      
+      // Check if file was downloaded even if exit code is non-zero
+      // Sometimes yt-dlp returns non-zero but still downloads the file
+      const filePath = await findDownloadedFile(outDir);
+      if (filePath) {
         const videoInfo = parseVideoInfoFromPath(filePath, a.target);
-        logger.info('Instagram video downloaded successfully', { url: a.target, filePath, videoInfo });
+        logger.info('Instagram video downloaded successfully', { url: a.target, filePath, videoInfo, exitCode: result.code });
         return { filePath, videoInfo };
       }
-      logger.warn('yt-dlp attempt failed (instagram)', { attempt: i + 1, code: result.code });
+      
+      // If no file found and exit code is non-zero, log the error
+      if (result.code !== 0) {
+        logger.warn('yt-dlp attempt failed (instagram)', {
+          attempt: i + 1,
+          code: result.code,
+          stderrPreview: (result.stderr || '').slice(0, 500),
+          stdoutPreview: (result.stdout || '').slice(0, 200),
+        });
+      } else {
+        // Exit code is 0 but no file found - this is unusual
+        logger.warn('yt-dlp returned success but no file found (instagram)', {
+          attempt: i + 1,
+          outDir,
+          stderrPreview: (result.stderr || '').slice(0, 500),
+          stdoutPreview: (result.stdout || '').slice(0, 200),
+        });
+      }
     }
 
     const stderrPreview = (last?.stderr || '').slice(0, 1200);
     const stdoutPreview = (last?.stdout || '').slice(0, 400);
-    logger.error('All yt-dlp attempts failed (instagram)', { url, stderrPreview, stdoutPreview });
+    logger.error('All yt-dlp attempts failed (instagram)', {
+      url,
+      normalizedUrl,
+      stderrPreview,
+      stdoutPreview,
+      attemptsCount: attempts.length,
+      lastExitCode: last?.code,
+    });
+    
+    // Log full stderr in debug mode for troubleshooting
+    if (config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace') {
+      logger.debug('Full yt-dlp stderr (instagram)', { stderr: last?.stderr });
+      logger.debug('Full yt-dlp stdout (instagram)', { stdout: last?.stdout });
+    }
+    
     throw new AppError(mapYtDlpError(last?.stderr || ''), 'yt-dlp download failed', { url, stderr: last?.stderr, stdout: last?.stdout, code: last?.code });
   } catch (error) {
     if (error instanceof AppError) throw error;

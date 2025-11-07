@@ -29,7 +29,7 @@ export type ErrorCode = typeof ERROR_CODES[keyof typeof ERROR_CODES];
 
 export function toUserMessage(error: AppError): string {
   const messages: Record<ErrorCode, string> = {
-    [ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED]: '❌ Video is private, age-restricted, or requires login. This can also be caused by geo-restrictions. Try setting YOUTUBE_COOKIES_B64 or GEO_BYPASS_COUNTRY environment variables.',
+    [ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED]: '❌ Video is private, age-restricted, or requires login. This can also be caused by geo-restrictions. For Instagram, try setting INSTAGRAM_COOKIES_B64. For YouTube, try setting YOUTUBE_COOKIES_B64. For geo-bypass, try setting GEO_BYPASS_COUNTRY environment variable.',
     [ERROR_CODES.ERR_GEO_BLOCKED]: '❌ Video is geo-blocked in your region. Try setting GEO_BYPASS_COUNTRY environment variable.',
     [ERROR_CODES.ERR_TOO_LARGE]: '❌ Video file is too large (max 2GB)',
     [ERROR_CODES.ERR_FETCH_FAILED]: '❌ Failed to fetch video. Please try again later.',
