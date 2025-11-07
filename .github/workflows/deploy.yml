@@ -16,29 +16,82 @@ jobs:
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           # Ensure the key file ends with a newline
           echo "" >> ~/.ssh/deploy_key
+          # Verify key file format
+          echo "Checking SSH key format..."
+          head -1 ~/.ssh/deploy_key
+          tail -1 ~/.ssh/deploy_key
           # Add host to known_hosts to avoid interactive prompt
           ssh-keyscan -H ${{ secrets.HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-          # Test SSH connection
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${{ secrets.USER }}@${{ secrets.HOST }} "echo 'SSH connection successful'" || echo "SSH test failed"
+          chmod 644 ~/.ssh/known_hosts
+          # Test SSH connection with verbose output
+          echo "Testing SSH connection..."
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${{ secrets.USER }}@${{ secrets.HOST }} "echo 'SSH connection successful'" 2>&1; then
+            echo "SSH connection test: SUCCESS"
+          else
+            echo "SSH connection test: FAILED (but continuing to deployment step)"
+            echo "Key file info:"
+            file ~/.ssh/deploy_key || true
+            ls -la ~/.ssh/deploy_key || true
+          fi
 
       - name: Deploy to Droplet
         run: |
           ssh -i ~/.ssh/deploy_key \
             -o StrictHostKeyChecking=no \
             -o ConnectTimeout=30 \
-            ${{ secrets.USER }}@${{ secrets.HOST }} << 'EOF'
+            -o LogLevel=ERROR \
+            ${{ secrets.USER }}@${{ secrets.HOST }} << 'DEPLOY_SCRIPT'
           set -e
-          cd /opt/getsocialvideobot || { echo "Directory /opt/getsocialvideobot not found"; exit 1; }
-          git pull || { echo "Git pull failed"; exit 1; }
-          cd video-bot || { echo "Directory video-bot not found"; exit 1; }
-          npm install || { echo "npm install failed"; exit 1; }
-          npm run build || { echo "npm build failed"; exit 1; }
-          pm2 restart video-bot --update-env || { echo "pm2 restart failed"; exit 1; }
-          pm2 save || { echo "pm2 save failed"; exit 1; }
-          echo "Deployment completed successfully"
-          EOF
+          set -x
+          echo "Starting deployment..."
+          echo "Current directory: $(pwd)"
+          echo "User: $(whoami)"
+          
+          if [ ! -d "/opt/getsocialvideobot" ]; then
+            echo "ERROR: Directory /opt/getsocialvideobot does not exist"
+            echo "Available directories in /opt:"
+            ls -la /opt/ || true
+            exit 1
+          fi
+          
+          cd /opt/getsocialvideobot || exit 1
+          echo "Changed to project directory: $(pwd)"
+          
+          if [ ! -d ".git" ]; then
+            echo "ERROR: .git directory not found. This might not be a git repository."
+            exit 1
+          fi
+          
+          echo "Pulling latest changes..."
+          git pull || { echo "ERROR: Git pull failed"; exit 1; }
+          
+          if [ ! -d "video-bot" ]; then
+            echo "ERROR: Directory video-bot not found"
+            echo "Available directories:"
+            ls -la || true
+            exit 1
+          fi
+          
+          cd video-bot || exit 1
+          echo "Changed to video-bot directory: $(pwd)"
+          
+          echo "Installing dependencies..."
+          npm install || { echo "ERROR: npm install failed"; exit 1; }
+          
+          echo "Building project..."
+          npm run build || { echo "ERROR: npm build failed"; exit 1; }
+          
+          echo "Restarting PM2 process..."
+          pm2 restart video-bot --update-env || { echo "ERROR: pm2 restart failed"; exit 1; }
+          
+          echo "Saving PM2 configuration..."
+          pm2 save || { echo "ERROR: pm2 save failed"; exit 1; }
+          
+          echo "Deployment completed successfully!"
+          DEPLOY_SCRIPT
 
