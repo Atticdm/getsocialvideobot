@@ -1,4 +1,12 @@
 {
+  "name": "getsocialvideobot",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "npm install --prefix video-bot --production=false --no-audit --no-fund",
+    "build": "npm run build --prefix video-bot",
+    "start": "npm run start --prefix video-bot"
+  },
   "devDependencies": {
     "@types/node": "^24.5.2",
     "ts-node": "^10.9.2",
