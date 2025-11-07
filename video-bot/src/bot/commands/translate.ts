@@ -19,6 +19,14 @@ import { mainKeyboard } from '../../ui/keyboard';
 import { VoicePreset } from '../../types/voice';
 import { trackUserEvent } from '../../core/analytics';
 
+function isTelegramTimeout(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const maybeError = error as { code?: string; message?: string };
+  if (maybeError.code === 'ETIMEDOUT') return true;
+  if (maybeError.message && maybeError.message.toLowerCase().includes('network timeout')) return true;
+  return false;
+}
+
 const stageLabels: Record<TranslationStage['name'], string> = {
   download: 'Скачиваю видео',
   separate: 'Разделяю голос и музыку (LALAL.AI)',
@@ -196,22 +204,33 @@ export async function translateCommand(ctx: Context): Promise<void> {
       await ensureBelowLimit(result.videoPath);
 
       const fileName = path.basename(result.videoPath);
-      await ctx.replyWithDocument(
-        { source: result.videoPath, filename: fileName },
-        statusMessageId
-          ? {
-              reply_parameters: {
-                message_id: statusMessageId,
-              },
-            }
-          : undefined
-      );
+      let uploadTimedOut = false;
+      try {
+        await ctx.replyWithDocument(
+          { source: result.videoPath, filename: fileName },
+          statusMessageId
+            ? {
+                reply_parameters: {
+                  message_id: statusMessageId,
+                },
+              }
+            : undefined
+        );
+      } catch (error) {
+        if (isTelegramTimeout(error)) {
+          uploadTimedOut = true;
+          logger.warn({ error }, 'Telegram upload timed out during translate command, assuming success');
+        } else {
+          throw error;
+        }
+      }
       trackUserEvent('translate.succeeded', userId, {
         direction,
         engine,
         mode,
         voicePreset: result.voicePreset ?? voicePreset,
         stages: result.stages.length,
+        telegramTimeout: uploadTimedOut,
       });
 
       if (statusMessageId) {
@@ -253,7 +272,10 @@ export async function translateCommand(ctx: Context): Promise<void> {
     });
 
     let message: string;
-    if (error instanceof AppError) {
+    if (isTelegramTimeout(error)) {
+      logger.warn({ error }, 'Telegram timeout after translation, notifying user softly');
+      message = '⚠️ Не удалось подтвердить отправку видео в Telegram. Если файл не появился, попробуйте ещё раз.';
+    } else if (error instanceof AppError) {
       message = toUserMessage(error);
     } else {
       message = '❌ Не удалось выполнить перевод. Попробуйте позже.';
