@@ -6,6 +6,34 @@ import { config } from './config';
 const ffmpegBinary = config.FFMPEG_PATH || 'ffmpeg';
 const ffprobeBinary = config.FFMPEG_PATH ? config.FFMPEG_PATH.replace(/ffmpeg$/i, 'ffprobe') : 'ffprobe';
 
+export async function generateVideoThumbnail(
+  inputVideoPath: string,
+  outputThumbnailPath: string,
+  seekSeconds = 0.5
+): Promise<void> {
+  const args = [
+    '-y',
+    '-ss',
+    seekSeconds.toString(),
+    '-i',
+    inputVideoPath,
+    '-vframes',
+    '1',
+    '-vf',
+    'scale=min(640,iw):-2',
+    outputThumbnailPath,
+  ];
+
+  const result = await run(ffmpegBinary, args, { timeout: 30000 });
+  if (result.code !== 0) {
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to capture thumbnail frame', {
+      stderr: result.stderr,
+      stdout: result.stdout,
+      args,
+    });
+  }
+}
+
 export async function getAudioDuration(path: string): Promise<number> {
   try {
     const args = [

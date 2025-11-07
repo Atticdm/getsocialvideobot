@@ -23,6 +23,27 @@ import {
   setCachedFile,
   type CachedFileRecord,
 } from '../../core/fileCache';
+import { generateVideoThumbnail } from '../../core/media';
+
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi']);
+
+function isVideoFile(filePath: string): boolean {
+  const ext = path.extname(filePath || '').toLowerCase();
+  return VIDEO_EXTENSIONS.has(ext);
+}
+
+async function maybeCreateThumbnail(filePath: string): Promise<string | undefined> {
+  if (!isVideoFile(filePath)) return undefined;
+  const thumbnailPath = `${filePath}.thumb.jpg`;
+  try {
+    await generateVideoThumbnail(filePath, thumbnailPath);
+    return thumbnailPath;
+  } catch (error) {
+    logger.warn({ error, filePath }, 'Failed to generate thumbnail for Telegram upload');
+    await safeRemove(thumbnailPath);
+    return undefined;
+  }
+}
 
 type TelegramUploadType = 'document' | 'video';
 
@@ -32,6 +53,7 @@ interface UploadOptions {
   fileName: string;
   replyToMessageId?: number;
   type: TelegramUploadType;
+  thumbnailPath?: string;
 }
 
 interface UploadResult {
@@ -53,7 +75,7 @@ async function uploadToTelegram(
   ctx: Context,
   options: UploadOptions
 ): Promise<Message.DocumentMessage | Message.VideoMessage> {
-  const { chatId, filePath, fileName, replyToMessageId, type } = options;
+  const { chatId, filePath, fileName, replyToMessageId, type, thumbnailPath } = options;
   const sizeBytes = await getFileSize(filePath);
   const start = Date.now();
   const startIso = new Date(start).toISOString();
@@ -70,32 +92,30 @@ async function uploadToTelegram(
   );
 
   try {
+    const replyParameters =
+      typeof replyToMessageId === 'number'
+        ? {
+            reply_parameters: {
+              message_id: replyToMessageId,
+            },
+          }
+        : {};
+
     const result =
       type === 'video'
         ? await ctx.replyWithVideo(
             { source: filePath, filename: fileName },
             {
               supports_streaming: true,
-              ...(typeof replyToMessageId === 'number'
-                ? {
-                    reply_parameters: {
-                      message_id: replyToMessageId,
-                    },
-                  }
-                : {}),
+              ...replyParameters,
             }
           )
         : await ctx.replyWithDocument(
             { source: filePath, filename: fileName },
             {
-              ...(typeof replyToMessageId === 'number'
-                ? {
-                    reply_parameters: {
-                      message_id: replyToMessageId,
-                    },
-                  }
-                : {}),
-            }
+              ...(thumbnailPath ? { thumb: { source: thumbnailPath } } : {}),
+              ...replyParameters,
+            } as Parameters<Context['replyWithDocument']>[1]
           );
 
     const finish = Date.now();
@@ -161,19 +181,26 @@ async function sendFileWithFallback(
     baseOptions.replyToMessageId = params.replyToMessageId;
   }
 
+  let thumbnailPath: string | undefined;
   try {
+    thumbnailPath = await maybeCreateThumbnail(baseOptions.filePath);
+    const message = await uploadToTelegram(ctx, {
+      ...baseOptions,
+      type: 'document',
+      ...(thumbnailPath ? { thumbnailPath } : {}),
+    });
+    return { message: message as Message.DocumentMessage, type: 'document' };
+  } catch (error) {
+    logger.warn({ error }, 'Document upload failed, retrying as video');
     const message = await uploadToTelegram(ctx, {
       ...baseOptions,
       type: 'video',
     });
     return { message: message as Message.VideoMessage, type: 'video' };
-  } catch (error) {
-    logger.warn({ error }, 'Video upload failed, retrying as document');
-    const message = await uploadToTelegram(ctx, {
-      ...baseOptions,
-      type: 'document',
-    });
-    return { message: message as Message.DocumentMessage, type: 'document' };
+  } finally {
+    if (thumbnailPath) {
+      await safeRemove(thumbnailPath);
+    }
   }
 }
 
