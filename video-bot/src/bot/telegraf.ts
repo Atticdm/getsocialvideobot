@@ -584,12 +584,15 @@ export async function setupBot(): Promise<void> {
   });
 
   bot.catch((err, ctx) => {
-    logger.error('Bot error', {
-      error: err,
-      userId: ctx.from?.id,
-      username: ctx.from?.username,
-      message: ctx.message && 'text' in ctx.message ? ctx.message.text : 'unknown',
-    });
+    logger.error(
+      {
+        error: err,
+        userId: ctx.from?.id,
+        username: ctx.from?.username,
+        message: ctx.message && 'text' in ctx.message ? ctx.message.text : 'unknown',
+      },
+      'Bot error'
+    );
 
     const messageText = ctx.message && 'text' in ctx.message ? ctx.message.text : undefined;
     const commandToken = messageText && messageText.startsWith('/') ? messageText.split(' ')[0] : undefined;
