@@ -114,7 +114,7 @@ async function uploadToTelegram(
             { source: filePath, filename: fileName },
             {
               supports_streaming: true,
-              ...(thumbnailPath ? { thumb: { source: thumbnailPath } } : {}),
+              ...(thumbnailPath ? { thumbnail: { source: thumbnailPath } } : {}),
               ...replyParameters,
             } as any
           );

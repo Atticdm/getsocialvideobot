@@ -20,7 +20,9 @@ export async function generateVideoThumbnail(
     '-vframes',
     '1',
     '-vf',
-    'scale=min(640,iw):-2',
+    'scale=min(320,iw):-2',
+    '-q:v',
+    '4',
     outputThumbnailPath,
   ];
 
