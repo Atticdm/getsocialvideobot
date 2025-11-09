@@ -334,7 +334,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
 
     // Use cached version if available and auto-publish not requested
     const publishStateBefore = ctx.state as { publishToArena?: boolean | undefined };
-    const shouldAutoPublish = Boolean(publishStateBefore?.publishToArena);
+    const shouldAutoPublish = false;
 
     if (cachedRecord && !shouldAutoPublish) {
       try {
@@ -379,23 +379,23 @@ export async function downloadCommand(ctx: Context): Promise<void> {
 
         const cachedFileId = video?.file_id ?? document?.file_id;
         const cachedUniqueId = video?.file_unique_id ?? document?.file_unique_id;
-        if (isArenaPublishingEnabled() && userId && cachedFileId && cachedUniqueId) {
-          const token = registerPublishCandidate({
-            ownerId: userId,
-            fileId: cachedFileId,
-            fileName: document?.file_name ?? `video_${cachedUniqueId}.mp4`,
-            originalUrl: url,
-          });
+        // if (isArenaPublishingEnabled() && userId && cachedFileId && cachedUniqueId) {
+        //   const token = registerPublishCandidate({
+        //     ownerId: userId,
+        //     fileId: cachedFileId,
+        //     fileName: document?.file_name ?? `video_${cachedUniqueId}.mp4`,
+        //     originalUrl: url,
+        //   });
 
-          await ctx.reply(
-            'Хочешь поделиться роликом в Reels Arena?',
-            Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
-          );
-          trackUserEvent('download.publish_prompt', userId, {
-            provider: providerName,
-            cached: true,
-          });
-        }
+        //   await ctx.reply(
+        //     'Хочешь поделиться роликом в Reels Arena?',
+        //     Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
+        //   );
+        //   trackUserEvent('download.publish_prompt', userId, {
+        //     provider: providerName,
+        //     cached: true,
+        //   });
+        // }
 
         return;
       } catch (cachedError) {
@@ -424,40 +424,40 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       await ensureBelowLimit(result.filePath);
 
       const publishState = ctx.state as { publishToArena?: boolean | undefined };
-      const shouldAutoPublishDownload = Boolean(publishState?.publishToArena);
+      const shouldAutoPublishDownload = false;
       if (publishState && publishState.publishToArena !== undefined) {
         publishState.publishToArena = undefined;
       }
 
       const fileName = path.basename(result.filePath);
 
-      if (shouldAutoPublishDownload) {
-        if (!isArenaPublishingEnabled()) {
-          trackUserEvent('download.auto_publish', userId, {
-            provider: providerName,
-            success: false,
-            reason: 'disabled',
-          });
-          await ctx.reply('⚙️ Публикация в канал временно недоступна. Попробуйте позже.');
-        } else {
-          const published = await publishFileDirectlyToArena({
-            filePath: result.filePath,
-            fileName,
-            originalUrl: url,
-            telegram: ctx.telegram,
-          });
-          trackUserEvent('download.auto_publish', userId, {
-            provider: providerName,
-            success: published,
-          });
-          if (published) {
-            await ctx.reply(`📣 Видео опубликовано в ${getArenaDisplayName()}!`);
-          } else {
-            await ctx.reply('⚠️ Не удалось опубликовать видео в канал. Попробуйте позже.');
-          }
-        }
-        return;
-      }
+      // if (shouldAutoPublishDownload) {
+      //   if (!isArenaPublishingEnabled()) {
+      //     trackUserEvent('download.auto_publish', userId, {
+      //       provider: providerName,
+      //       success: false,
+      //       reason: 'disabled',
+      //     });
+      //     await ctx.reply('⚙️ Публикация в канал временно недоступна. Попробуйте позже.');
+      //   } else {
+      //     const published = await publishFileDirectlyToArena({
+      //       filePath: result.filePath,
+      //       fileName,
+      //       originalUrl: url,
+      //       telegram: ctx.telegram,
+      //     });
+      //     trackUserEvent('download.auto_publish', userId, {
+      //       provider: providerName,
+      //       success: published,
+      //     });
+      //     if (published) {
+      //       await ctx.reply(`📣 Видео опубликовано в ${getArenaDisplayName()}!`);
+      //     } else {
+      //       await ctx.reply('⚠️ Не удалось опубликовать видео в канал. Попробуйте позже.');
+      //     }
+      //   }
+      //   return;
+      // }
 
       // Send file to user
       const uploadResult = await sendFileWithFallback(ctx, {
@@ -491,22 +491,22 @@ export async function downloadCommand(ctx: Context): Promise<void> {
         if (fileId) {
           await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size ?? video?.file_size ?? document?.file_size);
 
-          const token = registerPublishCandidate({
-            ownerId: userId,
-            fileId,
-            fileName,
-            fileType: uploadResult.type,
-            originalUrl: url,
-          });
+          // const token = registerPublishCandidate({
+          //   ownerId: userId,
+          //   fileId,
+          //   fileName,
+          //   fileType: uploadResult.type,
+          //   originalUrl: url,
+          // });
 
-          await ctx.reply(
-            'Хочешь поделиться роликом в Reels Arena?',
-            Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
-          );
-          trackUserEvent('download.publish_prompt', userId, {
-            provider: providerName,
-            uploadType: uploadResult.type,
-          });
+          // await ctx.reply(
+          //   'Хочешь поделиться роликом в Reels Arena?',
+          //   Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
+          // );
+          // trackUserEvent('download.publish_prompt', userId, {
+          //   provider: providerName,
+          //   uploadType: uploadResult.type,
+          // });
         } else {
           logger.warn(
             { userId, url },
