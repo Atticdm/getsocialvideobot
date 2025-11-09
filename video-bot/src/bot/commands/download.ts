@@ -1,4 +1,4 @@
-import { Context, Markup } from 'telegraf';
+import { Context } from 'telegraf';
 import { detectProvider, getProvider } from '../../providers';
 import type { ProviderName } from '../../providers';
 import { rateLimiter } from '../../core/rateLimit';
@@ -10,12 +10,7 @@ import { trackUserEvent } from '../../core/analytics';
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import type { Message } from 'telegraf/typings/core/types/typegram';
-import {
-  getArenaDisplayName,
-  isArenaPublishingEnabled,
-  publishFileDirectlyToArena,
-  registerPublishCandidate,
-} from '../publish';
+import { isArenaPublishingEnabled } from '../publish';
 import {
   deleteCachedFile,
   getCachedFile,
@@ -334,9 +329,11 @@ export async function downloadCommand(ctx: Context): Promise<void> {
 
     // Use cached version if available and auto-publish not requested
     const publishStateBefore = ctx.state as { publishToArena?: boolean | undefined };
-    const shouldAutoPublish = false;
+    if (publishStateBefore && publishStateBefore.publishToArena !== undefined) {
+      publishStateBefore.publishToArena = undefined;
+    }
 
-    if (cachedRecord && !shouldAutoPublish) {
+    if (cachedRecord) {
       try {
         const cacheStart = Date.now();
         const sentMessage = cachedRecord.type === 'video'
@@ -377,8 +374,8 @@ export async function downloadCommand(ctx: Context): Promise<void> {
 
         await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, cachedRecord.durationSeconds, cachedRecord.sizeBytes);
 
-        const cachedFileId = video?.file_id ?? document?.file_id;
-        const cachedUniqueId = video?.file_unique_id ?? document?.file_unique_id;
+        // const cachedFileId = video?.file_id ?? document?.file_id;
+        // const cachedUniqueId = video?.file_unique_id ?? document?.file_unique_id;
         // if (isArenaPublishingEnabled() && userId && cachedFileId && cachedUniqueId) {
         //   const token = registerPublishCandidate({
         //     ownerId: userId,
@@ -424,7 +421,6 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       await ensureBelowLimit(result.filePath);
 
       const publishState = ctx.state as { publishToArena?: boolean | undefined };
-      const shouldAutoPublishDownload = false;
       if (publishState && publishState.publishToArena !== undefined) {
         publishState.publishToArena = undefined;
       }
