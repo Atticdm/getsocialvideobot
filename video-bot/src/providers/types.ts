@@ -4,6 +4,8 @@ export interface VideoInfo {
   url: string;
   duration?: number | undefined;
   size?: number | undefined;
+  width?: number | undefined;
+  height?: number | undefined;
 }
 
 export interface DownloadResult {

@@ -4,8 +4,9 @@ import * as os from 'os';
 import { run } from '../../core/exec';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
-import { VideoInfo, DownloadResult, VideoMetadata } from '../types';
+import { DownloadResult, VideoMetadata } from '../types';
 import { config } from '../../core/config';
+import { parseVideoInfoFromPath } from '../utils';
 
 function mapYtDlpError(stderr: string): string {
   const s = (stderr || '').toLowerCase();
@@ -14,17 +15,6 @@ function mapYtDlpError(stderr: string): string {
   if (s.includes('unsupported url') || s.includes('no video found') || s.includes('cannot parse')) return ERROR_CODES.ERR_UNSUPPORTED_URL;
   if (s.includes('geo') || s.includes('blocked')) return ERROR_CODES.ERR_GEO_BLOCKED;
   return ERROR_CODES.ERR_INTERNAL;
-}
-
-function parseVideoInfoFromPath(filePath: string, url: string): VideoInfo {
-  const fileName = path.basename(filePath);
-  const ext = path.extname(fileName);
-  const base = fileName.slice(0, -ext.length);
-  const parts = base.split('.');
-  const id = parts[parts.length - 1] || 'unknown';
-  let title = base.replace(`.${id}`, '');
-  if (title.length > 100) title = title.slice(0, 100) + '...';
-  return { id, title, url };
 }
 
 async function findDownloadedFile(outDir: string): Promise<string | null> {
@@ -107,7 +97,7 @@ export async function downloadLinkedInVideo(url: string, outDir: string): Promis
       if (result.code === 0) {
         const filePath = await findDownloadedFile(outDir);
         if (!filePath) throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Downloaded file not found', { url: a.target, outDir });
-        const info = parseVideoInfoFromPath(filePath, a.target);
+        const info = await parseVideoInfoFromPath(filePath, a.target);
         logger.info('LinkedIn video downloaded successfully', { url: a.target, filePath, info });
         return { filePath, videoInfo: info };
       }

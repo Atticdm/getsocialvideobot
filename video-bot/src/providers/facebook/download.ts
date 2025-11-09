@@ -4,8 +4,9 @@ import * as os from 'os';
 import { run } from '../../core/exec';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
-import { FacebookVideoInfo, DownloadResult } from './types';
+import { DownloadResult } from './types';
 import { VideoMetadata } from '../types';
+import { parseVideoInfoFromPath } from '../utils';
 import { config } from '../../core/config';
 
 function extractIdFromUrl(originalUrl: string): string | null {
@@ -113,7 +114,7 @@ export async function downloadFacebookVideo(url: string, outDir: string): Promis
         if (!filePath) {
           throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Downloaded file not found', { url: a.target, outDir });
         }
-        const videoInfo = parseVideoInfoFromPath(filePath, a.target);
+        const videoInfo = await parseVideoInfoFromPath(filePath, a.target);
         logger.info('Facebook video downloaded successfully', { url: a.target, filePath, videoInfo });
         return { filePath, videoInfo };
       }
@@ -226,29 +227,6 @@ function mapYtDlpError(stderr: string): string {
   }
   
   return ERROR_CODES.ERR_INTERNAL;
-}
-
-function parseVideoInfoFromPath(filePath: string, url: string): FacebookVideoInfo {
-  const fileName = path.basename(filePath);
-  const ext = path.extname(fileName);
-  const nameWithoutExt = fileName.replace(ext, '');
-  
-  // Extract ID from filename (last part after the last dot before extension)
-  const parts = nameWithoutExt.split('.');
-  const id = parts[parts.length - 1] || 'unknown';
-  
-  // Use filename as title, but clean it up
-  let title = nameWithoutExt.replace(`.${id}`, '');
-  if (title.length > 100) {
-    title = title.substring(0, 100) + '...';
-  }
-  
-  return {
-    id,
-    title,
-    url,
-    duration: undefined,
-  };
 }
 
 async function findDownloadedFile(outDir: string): Promise<string | null> {

@@ -4,8 +4,9 @@ import * as os from 'os';
 import { run } from '../../core/exec';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
-import { VideoInfo, DownloadResult, VideoMetadata } from '../types';
+import { DownloadResult, VideoMetadata } from '../types';
 import { config } from '../../core/config';
+import { parseVideoInfoFromPath } from '../utils';
 
 function extractReelCode(u: string): string | null {
   try {
@@ -60,17 +61,6 @@ function mapYtDlpError(stderr: string): string {
 }
 
 type Attempt = { target: string; referer: string; ua: string; useCookies: boolean };
-
-function parseVideoInfoFromPath(filePath: string, url: string): VideoInfo {
-  const fileName = path.basename(filePath);
-  const ext = path.extname(fileName);
-  const name = fileName.slice(0, -ext.length);
-  const parts = name.split('.');
-  const id = parts[parts.length - 1] || 'unknown';
-  let title = name.replace(`.${id}`, '');
-  if (title.length > 100) title = title.substring(0, 100) + '...';
-  return { id, title, url };
-}
 
 async function findDownloadedFile(outDir: string): Promise<string | null> {
   try {
@@ -184,7 +174,7 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
       if (result.code === 0) {
         const filePath = await findDownloadedFile(outDir);
         if (filePath) {
-          const videoInfo = parseVideoInfoFromPath(filePath, a.target);
+        const videoInfo = await parseVideoInfoFromPath(filePath, a.target);
           logger.info('Instagram video downloaded successfully', { url: a.target, filePath, videoInfo, exitCode: result.code });
           return { filePath, videoInfo };
         }
@@ -210,7 +200,7 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
     const finalFilePath = await findDownloadedFile(outDir);
     if (finalFilePath) {
       logger.info('Found file after all attempts (instagram)', { filePath: finalFilePath, url });
-      const videoInfo = parseVideoInfoFromPath(finalFilePath, url);
+      const videoInfo = await parseVideoInfoFromPath(finalFilePath, url);
       return { filePath: finalFilePath, videoInfo };
     }
 

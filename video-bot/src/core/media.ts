@@ -66,6 +66,65 @@ export async function getAudioDuration(path: string): Promise<number> {
   }
 }
 
+export async function getVideoMetadata(
+  path: string
+): Promise<{ duration?: number; width?: number; height?: number }> {
+  try {
+    const args = [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=width,height,duration',
+      '-of',
+      'json',
+      path,
+    ];
+
+    const result = await run(ffprobeBinary, args, { timeout: 15000 });
+    if (result.code !== 0) {
+      logger.warn('ffprobe failed to get video metadata', {
+        path,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      });
+      return {};
+    }
+
+    type FfprobeStream = {
+      duration?: string | number;
+      width?: number;
+      height?: number;
+    };
+
+    const parsed = JSON.parse(result.stdout || '{}') as { streams?: FfprobeStream[] };
+
+    const stream = Array.isArray(parsed?.streams) ? parsed.streams[0] : undefined;
+    const rawDuration = stream?.duration;
+    const duration =
+      typeof rawDuration === 'string'
+        ? Number(rawDuration)
+        : typeof rawDuration === 'number'
+          ? rawDuration
+          : undefined;
+    const width = typeof stream?.width === 'number' ? stream.width : undefined;
+    const height = typeof stream?.height === 'number' ? stream.height : undefined;
+
+    const metadata: { duration?: number; width?: number; height?: number } = {};
+    if (typeof duration === 'number' && Number.isFinite(duration)) metadata.duration = duration;
+    if (typeof width === 'number') metadata.width = width;
+    if (typeof height === 'number') metadata.height = height;
+    return metadata;
+  } catch (error) {
+    logger.warn(
+      { error: error instanceof Error ? error.message : String(error), path },
+      'getVideoMetadata failed'
+    );
+    return {};
+  }
+}
+
 export async function concatenateAudioParts(partPaths: string[], outputPath: string): Promise<void> {
   if (partPaths.length === 0) {
     throw new AppError(ERROR_CODES.ERR_INTERNAL, 'No audio parts to concatenate.');

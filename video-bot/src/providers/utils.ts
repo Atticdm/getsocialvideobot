@@ -2,6 +2,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { logger } from '../core/logger';
 import type { VideoInfo } from './types';
+import { getVideoMetadata } from '../core/media';
 
 export async function findDownloadedFile(outDir: string): Promise<string | null> {
   try {
@@ -25,7 +26,7 @@ export async function findDownloadedFile(outDir: string): Promise<string | null>
   }
 }
 
-export function parseVideoInfoFromPath(filePath: string, url: string): VideoInfo {
+export async function parseVideoInfoFromPath(filePath: string, url: string): Promise<VideoInfo> {
   const fileName = path.basename(filePath);
   const ext = path.extname(fileName);
   const base = fileName.slice(0, -ext.length);
@@ -33,5 +34,6 @@ export function parseVideoInfoFromPath(filePath: string, url: string): VideoInfo
   const id = parts.length > 1 ? parts[parts.length - 1] || 'unknown' : 'unknown';
   let title = parts.length > 1 ? base.replace(`.${id}`, '') : base;
   if (title.length > 100) title = title.slice(0, 100) + '...';
-  return { id, title, url };
+  const metadata = await getVideoMetadata(filePath);
+  return { id, title, url, duration: metadata.duration, width: metadata.width, height: metadata.height };
 }

@@ -4,8 +4,9 @@ import * as os from 'os';
 import { run } from '../../core/exec';
 import { logger } from '../../core/logger';
 import { ERROR_CODES, AppError } from '../../core/errors';
-import { VideoInfo, DownloadResult, VideoMetadata } from '../types';
+import { DownloadResult, VideoMetadata } from '../types';
 import { config } from '../../core/config';
+import { parseVideoInfoFromPath } from '../utils';
 
 function normalizeUrl(u: string): string {
   // Remove query parameters that might cause issues
@@ -34,17 +35,6 @@ function mapYtDlpError(stderr: string): string {
     return ERROR_CODES.ERR_GEO_BLOCKED;
   }
   return ERROR_CODES.ERR_INTERNAL;
-}
-
-function parseVideoInfoFromPath(filePath: string, url: string): VideoInfo {
-  const fileName = path.basename(filePath);
-  const ext = path.extname(fileName);
-  const name = fileName.slice(0, -ext.length);
-  const parts = name.split('.');
-  const id = parts[parts.length - 1] || 'unknown';
-  let title = name.replace(`.${id}`, '');
-  if (title.length > 100) title = title.substring(0, 100) + '...';
-  return { id, title, url };
 }
 
 async function findDownloadedFile(outDir: string): Promise<string | null> {
@@ -160,7 +150,7 @@ export async function downloadTikTokVideo(url: string, outDir: string): Promise<
         if (!filePath) {
           throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Downloaded file not found', { url: a.target, outDir });
         }
-        const videoInfo = parseVideoInfoFromPath(filePath, a.target);
+        const videoInfo = await parseVideoInfoFromPath(filePath, a.target);
         logger.info('TikTok video downloaded successfully', { url: a.target, filePath, videoInfo });
         return { filePath, videoInfo };
       }
@@ -270,4 +260,3 @@ function extractMetadata(json: any, fallbackUrl: string): VideoMetadata {
   
   return metadata;
 }
-

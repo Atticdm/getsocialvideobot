@@ -210,7 +210,7 @@ export async function downloadYouTubeVideo(url: string, outDir: string): Promise
           'Downloaded file stats'
         );
 
-        const info = parseVideoInfoFromPath(filePath, url);
+        const info = await parseVideoInfoFromPath(filePath, url);
         logger.info('YouTube video downloaded and processed successfully', { url, filePath, info });
         return { filePath, videoInfo: info };
       }
