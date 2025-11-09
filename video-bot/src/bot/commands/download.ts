@@ -25,6 +25,7 @@ import {
 } from '../../core/fileCache';
 import { generateVideoThumbnail } from '../../core/media';
 import { createReadStream } from 'fs';
+import type { VideoInfo } from '../../providers/types';
 
 const VIDEO_MIME_TYPES = new Map<string, string>([
   ['.mp4', 'video/mp4'],
@@ -74,6 +75,9 @@ interface UploadOptions {
   replyToMessageId?: number;
   type: TelegramUploadType;
   thumbnailPath?: string;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
 }
 
 interface UploadResult {
@@ -95,7 +99,7 @@ async function uploadToTelegram(
   ctx: Context,
   options: UploadOptions
 ): Promise<Message.DocumentMessage | Message.VideoMessage> {
-  const { chatId, filePath, fileName, replyToMessageId, type, thumbnailPath } = options;
+  const { chatId, filePath, fileName, replyToMessageId, type, thumbnailPath, width, height, durationSeconds } = options;
   const sizeBytes = await getFileSize(filePath);
   const start = Date.now();
   const startIso = new Date(start).toISOString();
@@ -127,6 +131,11 @@ async function uploadToTelegram(
       type === 'video'
         ? await ctx.replyWithVideo(inputFile, {
             supports_streaming: true,
+            ...(typeof width === 'number' ? { width: Math.round(width) } : {}),
+            ...(typeof height === 'number' ? { height: Math.round(height) } : {}),
+            ...(typeof durationSeconds === 'number'
+              ? { duration: Math.max(1, Math.round(durationSeconds)) }
+              : {}),
             ...replyParameters,
           })
         : await ctx.replyWithDocument(
@@ -184,14 +193,14 @@ async function uploadToTelegram(
 
 async function sendFileWithFallback(
   ctx: Context,
-  params: { filePath: string; fileName: string; replyToMessageId?: number }
+  params: { filePath: string; fileName: string; replyToMessageId?: number; videoInfo?: VideoInfo }
 ): Promise<UploadResult> {
   const chatId = ctx.chat?.id;
   if (!chatId) {
     throw new AppError('ERR_TELEGRAM_UPLOAD', 'Unable to determine chat id for upload');
   }
 
-  const baseOptions: Omit<UploadOptions, 'type'> & { type?: TelegramUploadType } = {
+  const baseOptions: Omit<UploadOptions, 'type' | 'thumbnailPath' | 'width' | 'height' | 'durationSeconds'> = {
     chatId,
     filePath: params.filePath,
     fileName: params.fileName,
@@ -200,8 +209,28 @@ async function sendFileWithFallback(
     baseOptions.replyToMessageId = params.replyToMessageId;
   }
 
+  const videoOptions: UploadOptions = {
+    ...baseOptions,
+    type: 'video',
+  };
+  if (typeof params.videoInfo?.width === 'number') {
+    videoOptions.width = params.videoInfo.width;
+  }
+  if (typeof params.videoInfo?.height === 'number') {
+    videoOptions.height = params.videoInfo.height;
+  }
+  if (typeof params.videoInfo?.duration === 'number') {
+    videoOptions.durationSeconds = params.videoInfo.duration;
+  }
+
   let thumbnailPath: string | undefined;
   try {
+    const message = await uploadToTelegram(ctx, {
+      ...videoOptions,
+    });
+    return { message: message as Message.VideoMessage, type: 'video' };
+  } catch (error) {
+    logger.warn({ error }, 'Video upload failed, retrying as document');
     thumbnailPath = await maybeCreateThumbnail(baseOptions.filePath);
     const message = await uploadToTelegram(ctx, {
       ...baseOptions,
@@ -209,13 +238,6 @@ async function sendFileWithFallback(
       ...(thumbnailPath ? { thumbnailPath } : {}),
     });
     return { message: message as Message.DocumentMessage, type: 'document' };
-  } catch (error) {
-    logger.warn({ error }, 'Document upload failed, retrying as video');
-    const message = await uploadToTelegram(ctx, {
-      ...baseOptions,
-      type: 'video',
-    });
-    return { message: message as Message.VideoMessage, type: 'video' };
   } finally {
     if (thumbnailPath) {
       await safeRemove(thumbnailPath);
@@ -442,6 +464,7 @@ export async function downloadCommand(ctx: Context): Promise<void> {
         filePath: result.filePath,
         fileName,
         replyToMessageId: processingMessage.message_id,
+        videoInfo: result.videoInfo,
       });
       const sentMessage = uploadResult.message;
 
