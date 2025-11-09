@@ -24,12 +24,32 @@ import {
   type CachedFileRecord,
 } from '../../core/fileCache';
 import { generateVideoThumbnail } from '../../core/media';
+import { createReadStream } from 'fs';
 
-const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi']);
+const VIDEO_MIME_TYPES = new Map<string, string>([
+  ['.mp4', 'video/mp4'],
+  ['.m4v', 'video/mp4'],
+  ['.mov', 'video/quicktime'],
+  ['.webm', 'video/webm'],
+  ['.mkv', 'video/x-matroska'],
+  ['.avi', 'video/x-msvideo'],
+]);
+
+function getMimeType(filePath: string): string | undefined {
+  const ext = path.extname(filePath || '').toLowerCase();
+  return VIDEO_MIME_TYPES.get(ext);
+}
 
 function isVideoFile(filePath: string): boolean {
-  const ext = path.extname(filePath || '').toLowerCase();
-  return VIDEO_EXTENSIONS.has(ext);
+  return Boolean(getMimeType(filePath));
+}
+
+function buildInputFile(filePath: string, fileName: string): any {
+  const mimeType = getMimeType(filePath);
+  const source = createReadStream(filePath);
+  return mimeType
+    ? { source, filename: fileName, contentType: mimeType }
+    : { source, filename: fileName };
 }
 
 async function maybeCreateThumbnail(filePath: string): Promise<string | undefined> {
@@ -101,20 +121,18 @@ async function uploadToTelegram(
           }
         : {};
 
+    const inputFile = buildInputFile(filePath, fileName);
+
     const result =
       type === 'video'
-        ? await ctx.replyWithVideo(
-            { source: filePath, filename: fileName },
-            {
-              supports_streaming: true,
-              ...replyParameters,
-            }
-          )
+        ? await ctx.replyWithVideo(inputFile, {
+            supports_streaming: true,
+            ...replyParameters,
+          })
         : await ctx.replyWithDocument(
-            { source: filePath, filename: fileName },
+            inputFile,
             {
-              supports_streaming: true,
-              ...(thumbnailPath ? { thumbnail: { source: thumbnailPath } } : {}),
+              ...(thumbnailPath ? { thumbnail: { source: createReadStream(thumbnailPath) } } : {}),
               ...replyParameters,
             } as any
           );
