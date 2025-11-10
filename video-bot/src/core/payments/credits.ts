@@ -4,6 +4,7 @@ import { logger } from '../logger';
 import type { CreditsCheckResult, CreditsBalance, FeatureType, CreditType, UsageStats } from './types';
 import { isAdmin } from './admin';
 import { getPool as getDbPool, closeDbPool } from '../dbCache';
+import { isRedsysEnabled, getRedsysPaymentPackage } from './redsys';
 
 // Prepared statements для производительности
 const GET_OR_CREATE_USER_CREDITS_QUERY = `
@@ -125,12 +126,14 @@ export async function checkCreditsAvailable(
 
   const pool = getDbPool();
   if (!pool) {
-    // Если БД недоступна, разрешаем использование с логированием
-    logger.warn({ userId, feature }, 'Database unavailable, allowing feature usage');
+    // Если БД недоступна, но платежи включены - блокируем использование
+    // Это предотвращает бесплатное использование при проблемах с БД
+    logger.error({ userId, feature }, 'Database unavailable, blocking feature usage');
     return {
-      available: true,
-      creditType: 'free',
+      available: false,
+      creditType: null,
       creditsRemaining: 0,
+      message: '❌ Сервис временно недоступен. Система платежей не может проверить ваш баланс. Попробуйте позже или обратитесь в поддержку (/support).',
     };
   }
 
@@ -170,24 +173,43 @@ export async function checkCreditsAvailable(
       };
     }
 
-    // Нет доступных кредитов
+    // Нет доступных кредитов - формируем сообщение с учетом доступных провайдеров
+    const starsEnabled = true;
+    const redsysEnabled = isRedsysEnabled();
+    
     const packageCredits = config.STARS_PACKAGE_CREDITS || 10;
     const starsAmount = config.STARS_PACKAGE_PRICE || 500;
     const priceUsd = starsAmount / 100; // Stars to USD (1 Star = $0.01)
+    
+    let message = `❌ У вас нет доступных кредитов для ${feature === 'translate' ? 'перевода' : 'озвучки'}\n\n📊 Ваш баланс:\n• Бесплатный кредит: использован ✅\n• Платных кредитов: 0\n\n💰 Доступные способы оплаты:`;
+    
+    if (starsEnabled && redsysEnabled) {
+      const redsysPackage = getRedsysPaymentPackage();
+      const priceRub = (redsysPackage.rublesAmount || 0) / 100;
+      message += `\n• ${packageCredits} кредитов за ${starsAmount} ⭐ Stars ($${priceUsd})\n• ${redsysPackage.credits} кредитов за ${priceRub} ${redsysPackage.currency || 'RUB'}`;
+    } else if (starsEnabled) {
+      message += `\n• ${packageCredits} кредитов за $${priceUsd} (${starsAmount} ⭐ Stars)`;
+    } else if (redsysEnabled) {
+      const redsysPackage = getRedsysPaymentPackage();
+      const priceRub = (redsysPackage.rublesAmount || 0) / 100;
+      message += `\n• ${redsysPackage.credits} кредитов за ${priceRub} ${redsysPackage.currency || 'RUB'}`;
+    }
 
     return {
       available: false,
       creditType: null,
       creditsRemaining: 0,
-      message: `❌ У вас нет доступных кредитов для ${feature === 'translate' ? 'перевода' : 'озвучки'}\n\n📊 Ваш баланс:\n• Бесплатный кредит: использован ✅\n• Платных кредитов: 0\n\n💰 Купить пакет из ${packageCredits} кредитов за $${priceUsd} (${starsAmount} ⭐ Stars)`,
+      message,
     };
   } catch (error: unknown) {
     logger.error({ error, userId, feature }, 'Failed to check credits availability');
-    // При ошибке разрешаем использование с логированием
+    // При ошибке БД блокируем использование, если платежи включены
+    // Это предотвращает бесплатное использование при проблемах с БД
     return {
-      available: true,
-      creditType: 'free',
+      available: false,
+      creditType: null,
       creditsRemaining: 0,
+      message: '❌ Ошибка проверки баланса. Попробуйте позже или обратитесь в поддержку (/support).',
     };
   }
 }
@@ -216,9 +238,10 @@ export async function useCredit(
 
   const pool = getDbPool();
   if (!pool) {
-    logger.warn({ userId, feature }, 'Database unavailable, skipping credit deduction');
-    await logUsage(userId, feature, 'free', provider, true);
-    return true;
+    // Если БД недоступна, не списываем кредит
+    // Это ошибка состояния - кредит должен был быть проверен до этого
+    logger.error({ userId, feature }, 'Database unavailable during credit deduction - this should not happen');
+    return false;
   }
 
   try {
