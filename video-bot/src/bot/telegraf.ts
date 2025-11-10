@@ -33,6 +33,9 @@ import { getPaymentPackage, createPaymentButton } from '../core/payments/stars';
 import { handleRedsysPreCheckoutQuery, handleRedsysSuccessfulPayment } from '../core/payments/redsys';
 import { termsCommand } from './commands/terms';
 import { supportCommand } from './commands/support';
+import { checkCreditsAvailable } from '../core/payments/credits';
+import { getRedsysPaymentPackage, isRedsysEnabled } from '../core/payments/redsys';
+import { Markup } from 'telegraf';
 
 type TranslationIntent =
   | { flow: 'translate'; stage: 'direction' }
@@ -198,6 +201,61 @@ export async function setupBot(): Promise<void> {
     const enabled = await ensureTranslationEnabled(ctx);
     if (!enabled) return;
 
+    // Проверка кредитов перед началом процесса перевода
+    try {
+      const creditsCheck = await checkCreditsAvailable(userId, 'translate');
+      
+      if (!creditsCheck.available) {
+        // Показываем сообщение с предложением купить кредиты
+        const starsEnabled = true;
+        const redsysEnabled = isRedsysEnabled();
+        
+        if (starsEnabled && redsysEnabled) {
+          // Оба провайдера доступны - показываем выбор
+          await ctx.reply(
+            creditsCheck.message || '❌ У вас нет доступных кредитов для перевода\n\n💳 Выберите способ оплаты:',
+            {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    Markup.button.callback('⭐ Оплатить Stars', 'buy_stars'),
+                    Markup.button.callback('💳 Оплатить картой', 'buy_redsys'),
+                  ],
+                  [
+                    Markup.button.callback('❌ Отмена', 'payment_cancel'),
+                  ],
+                ],
+              },
+            }
+          );
+        } else {
+          // Только один провайдер доступен
+          const packageInfo = starsEnabled ? getPaymentPackage() : getRedsysPaymentPackage();
+          const buttonText = starsEnabled
+            ? `💳 Купить ${packageInfo.credits} кредитов за ${packageInfo.starsAmount || 500} ⭐`
+            : `💳 Купить ${packageInfo.credits} кредитов за ${((packageInfo.rublesAmount || 0) / 100).toFixed(2)} ${packageInfo.currency || 'RUB'}`;
+          
+          await ctx.reply(creditsCheck.message || '❌ У вас нет доступных кредитов для перевода', {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  Markup.button.callback(buttonText, 'buy_credits'),
+                ],
+                [
+                  Markup.button.callback('❌ Отмена', 'payment_cancel'),
+                ],
+              ],
+            },
+          });
+        }
+        return;
+      }
+    } catch (error: unknown) {
+      logger.error({ error, userId }, 'Failed to check credits in startTranslateFlow');
+      await ctx.reply('❌ Ошибка проверки кредитов. Попробуйте позже или обратитесь в поддержку (/support).');
+      return;
+    }
+
     translationIntents.set(userId, { flow: 'translate', stage: 'direction' });
     await ctx.reply('Выберите направление перевода:', {
       reply_markup: translateDirectionKeyboard.reply_markup,
@@ -212,6 +270,61 @@ export async function setupBot(): Promise<void> {
     }
     const enabled = await ensureTranslationEnabled(ctx);
     if (!enabled) return;
+
+    // Проверка кредитов перед началом процесса озвучки
+    try {
+      const creditsCheck = await checkCreditsAvailable(userId, 'voice_over');
+      
+      if (!creditsCheck.available) {
+        // Показываем сообщение с предложением купить кредиты
+        const starsEnabled = true;
+        const redsysEnabled = isRedsysEnabled();
+        
+        if (starsEnabled && redsysEnabled) {
+          // Оба провайдера доступны - показываем выбор
+          await ctx.reply(
+            creditsCheck.message || '❌ У вас нет доступных кредитов для озвучки\n\n💳 Выберите способ оплаты:',
+            {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    Markup.button.callback('⭐ Оплатить Stars', 'buy_stars'),
+                    Markup.button.callback('💳 Оплатить картой', 'buy_redsys'),
+                  ],
+                  [
+                    Markup.button.callback('❌ Отмена', 'payment_cancel'),
+                  ],
+                ],
+              },
+            }
+          );
+        } else {
+          // Только один провайдер доступен
+          const packageInfo = starsEnabled ? getPaymentPackage() : getRedsysPaymentPackage();
+          const buttonText = starsEnabled
+            ? `💳 Купить ${packageInfo.credits} кредитов за ${packageInfo.starsAmount || 500} ⭐`
+            : `💳 Купить ${packageInfo.credits} кредитов за ${((packageInfo.rublesAmount || 0) / 100).toFixed(2)} ${packageInfo.currency || 'RUB'}`;
+          
+          await ctx.reply(creditsCheck.message || '❌ У вас нет доступных кредитов для озвучки', {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  Markup.button.callback(buttonText, 'buy_credits'),
+                ],
+                [
+                  Markup.button.callback('❌ Отмена', 'payment_cancel'),
+                ],
+              ],
+            },
+          });
+        }
+        return;
+      }
+    } catch (error: unknown) {
+      logger.error({ error, userId }, 'Failed to check credits in startVoiceFlow');
+      await ctx.reply('❌ Ошибка проверки кредитов. Попробуйте позже или обратитесь в поддержку (/support).');
+      return;
+    }
 
     translationIntents.set(userId, { flow: 'voice', stage: 'language' });
     await ctx.reply('Выберите язык оригинального ролика:', {
