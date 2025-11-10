@@ -21,6 +21,8 @@ export async function helpCommand(ctx: Context): Promise<void> {
 /translate <url> [en-ru|ru-en|identity-ru|identity-en|auto] [hume|elevenlabs|terminator-ru|terminator-en] — перевод или переозвучка рилса (при ENABLE_REEL_TRANSLATION)
 /credits — показать баланс кредитов
 /buy — купить пакет кредитов для переводов и озвучки
+/terms — условия использования бота
+/support — помощь и поддержка
 // Arena publishing functionality is temporarily disabled
 // /publish — включить режим «отправить ссылку и сразу опубликовать в канал»
 

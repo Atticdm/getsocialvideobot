@@ -30,6 +30,8 @@ import { shutdownAnalytics, trackSystemEvent, trackUserEvent } from '../core/ana
 import { creditsCommand, buyCommand } from './commands/credits';
 import { handlePreCheckoutQuery, handleSuccessfulPayment } from '../core/payments/stars';
 import { getPaymentPackage, createPaymentButton } from '../core/payments/stars';
+import { termsCommand } from './commands/terms';
+import { supportCommand } from './commands/support';
 
 type TranslationIntent =
   | { flow: 'translate'; stage: 'direction' }
@@ -157,6 +159,8 @@ export async function setupBot(): Promise<void> {
   bot.command('translate', translateCommand);
   bot.command('credits', creditsCommand);
   bot.command('buy', buyCommand);
+  bot.command('terms', termsCommand);
+  bot.command('support', supportCommand);
 
   setupInlineHandlers(bot);
 
