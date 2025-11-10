@@ -115,16 +115,28 @@ async function logToolVersions(): Promise<void> {
 function ensureSignals(): void {
   if (signalsRegistered) return;
   signalsRegistered = true;
-  process.once('SIGINT', () => {
-    logger.info('Received SIGINT, shutting down gracefully');
+  
+  const shutdown = async (signal: string) => {
+    logger.info(`Received ${signal}, shutting down gracefully`);
     void shutdownAnalytics();
-    bot.stop('SIGINT');
+    
+    // Закрываем PostgreSQL pool если используется
+    try {
+      const { closeDbPool } = await import('../core/dbCache');
+      await closeDbPool();
+    } catch (error) {
+      // Игнорируем ошибки если модуль не загружен
+    }
+    
+    bot.stop(signal);
+  };
+  
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
   });
 
   process.once('SIGTERM', () => {
-    logger.info('Received SIGTERM, shutting down gracefully');
-    void shutdownAnalytics();
-    bot.stop('SIGTERM');
+    void shutdown('SIGTERM');
   });
 }
 
