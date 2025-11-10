@@ -281,10 +281,15 @@ export async function translateCommand(ctx: Context): Promise<void> {
       });
 
       if (statusMessageId) {
-        await appendProgress('🎉 Готово!');
-        const voiceDescription = describeVoice(result.voicePreset);
-        if (voiceDescription) {
-          await appendProgress(`🎙 Голос: ${voiceDescription}`);
+        try {
+          await appendProgress('🎉 Готово!');
+          const voiceDescription = describeVoice(result.voicePreset);
+          if (voiceDescription) {
+            await appendProgress(`🎙 Голос: ${voiceDescription}`);
+          }
+        } catch (error) {
+          // Игнорируем ошибки обновления финального статуса - видео уже отправлено
+          logger.warn({ error, userId }, 'Failed to update final status message');
         }
       }
     } finally {
@@ -328,7 +333,12 @@ export async function translateCommand(ctx: Context): Promise<void> {
       message = '❌ Не удалось выполнить перевод. Попробуйте позже.';
     }
 
-    await ctx.reply(message);
+    try {
+      await ctx.reply(message);
+    } catch (replyError) {
+      // Если не удалось отправить сообщение об ошибке, логируем, но не пробрасываем дальше
+      logger.error({ error: replyError, originalError: error, userId }, 'Failed to send error message');
+    }
 
     // Возврат кредита при ошибке (только если кредит был списан до ошибки)
     // Кредит списывается только после успешной загрузки видео, поэтому здесь возврат не нужен
@@ -340,8 +350,16 @@ export async function translateCommand(ctx: Context): Promise<void> {
   } finally {
     release();
     translationIntents.delete(userId);
-    await ctx.reply('Готово. Выберите дальнейшее действие.', {
-      reply_markup: mainKeyboard.reply_markup,
-    });
+    
+    // Отправляем финальное сообщение только если не было ошибки
+    // Ошибки в finally не должны попадать в глобальный обработчик
+    try {
+      await ctx.reply('Готово. Выберите дальнейшее действие.', {
+        reply_markup: mainKeyboard.reply_markup,
+      });
+    } catch (error) {
+      // Игнорируем ошибки отправки финального сообщения, чтобы не попасть в bot.catch
+      logger.warn({ error, userId }, 'Failed to send final message in translate command');
+    }
   }
 }
