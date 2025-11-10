@@ -22,6 +22,10 @@ const configSchema = z.object({
   DATABASE_URL: z.string().optional().default(''),
   DB_POOL_MIN: z.coerce.number().int().positive().optional().default(2),
   DB_POOL_MAX: z.coerce.number().int().positive().optional().default(10),
+  ADMIN_USER_IDS: z.string().optional().default(''), // "123456789,987654321"
+  PAYMENT_ENABLED: z.coerce.boolean().optional().default(true),
+  STARS_PACKAGE_CREDITS: z.coerce.number().int().positive().optional().default(10),
+  STARS_PACKAGE_PRICE: z.coerce.number().int().positive().optional().default(500), // Stars
   POSTHOG_ENABLED: z.union([z.boolean(), z.string()]).optional(),
   POSTHOG_API_KEY: z.string().optional().default(''),
   POSTHOG_HOST: z.string().optional().default('https://us.i.posthog.com'),

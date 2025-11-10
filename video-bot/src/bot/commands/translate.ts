@@ -18,6 +18,8 @@ import { translationIntents } from '../telegraf';
 import { mainKeyboard } from '../../ui/keyboard';
 import { VoicePreset } from '../../types/voice';
 import { trackUserEvent } from '../../core/analytics';
+import { checkCreditsAvailable, useCredit, refundCredit } from '../../core/payments/credits';
+import { getPaymentPackage } from '../../core/payments/stars';
 
 function isTelegramTimeout(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -162,9 +164,41 @@ export async function translateCommand(ctx: Context): Promise<void> {
 
   const release = await rateLimiter.acquire(userId);
 
+  // Проверка кредитов перед началом операции
+  const feature = mode === 'voice' ? 'voice_over' : 'translate';
+  const creditsCheck = await checkCreditsAvailable(userId, feature);
+
+  if (!creditsCheck.available) {
+    release();
+    const packageInfo = getPaymentPackage();
+    
+    // Показываем сообщение с предложением купить кредиты
+    await ctx.reply(creditsCheck.message || '❌ У вас нет доступных кредитов', {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: `💳 Купить ${packageInfo.credits} кредитов за ${packageInfo.starsAmount} ⭐`,
+              callback_data: 'buy_credits',
+            },
+          ],
+          [
+            {
+              text: '❌ Отмена',
+              callback_data: 'payment_cancel',
+            },
+          ],
+        ],
+      },
+    });
+    return;
+  }
+
   const chatId = ctx.chat?.id;
   let statusMessageId: number | undefined;
   const progressLines: string[] = [];
+  let creditUsed = false;
+  let creditType: 'free' | 'paid' | 'admin' | null = creditsCheck.creditType;
 
   const appendProgress = async (line: string) => {
     progressLines.push(line);
@@ -224,6 +258,18 @@ export async function translateCommand(ctx: Context): Promise<void> {
           throw error;
         }
       }
+      // Списание кредита после успешной загрузки видео
+      if (creditType && creditType !== 'admin') {
+        const provider = engine === 'elevenlabs' ? 'elevenlabs' : engine === 'hume' ? 'hume' : undefined;
+        const creditDeducted = await useCredit(userId, feature, creditType, provider);
+        if (creditDeducted) {
+          creditUsed = true;
+          logger.info({ userId, feature, creditType, provider }, 'Credit deducted after successful translation');
+        } else {
+          logger.error({ userId, feature, creditType }, 'Failed to deduct credit after successful translation');
+        }
+      }
+
       trackUserEvent('translate.succeeded', userId, {
         direction,
         engine,
@@ -231,6 +277,7 @@ export async function translateCommand(ctx: Context): Promise<void> {
         voicePreset: result.voicePreset ?? voicePreset,
         stages: result.stages.length,
         telegramTimeout: uploadTimedOut,
+        creditType: creditType || undefined,
       });
 
       if (statusMessageId) {
@@ -282,6 +329,14 @@ export async function translateCommand(ctx: Context): Promise<void> {
     }
 
     await ctx.reply(message);
+
+    // Возврат кредита при ошибке (только если кредит был списан до ошибки)
+    // Кредит списывается только после успешной загрузки видео, поэтому здесь возврат не нужен
+    // Но оставляем на случай если логика изменится в будущем
+    if (creditUsed && creditType && creditType !== 'admin') {
+      await refundCredit(userId, feature);
+      logger.info({ userId, feature, creditType }, 'Credit refunded due to translation error');
+    }
   } finally {
     release();
     translationIntents.delete(userId);

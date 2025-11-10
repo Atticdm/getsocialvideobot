@@ -19,6 +19,8 @@ export async function helpCommand(ctx: Context): Promise<void> {
 /download <url> — скачать оригинал (Facebook, Instagram, YouTube, TikTok, LinkedIn, Sora)
 /dl <url> или /get <url> — короткие алиасы (удобно в группах)
 /translate <url> [en-ru|ru-en|identity-ru|identity-en|auto] [hume|elevenlabs|terminator-ru|terminator-en] — перевод или переозвучка рилса (при ENABLE_REEL_TRANSLATION)
+/credits — показать баланс кредитов
+/buy — купить пакет кредитов для переводов и озвучки
 // Arena publishing functionality is temporarily disabled
 // /publish — включить режим «отправить ссылку и сразу опубликовать в канал»
 

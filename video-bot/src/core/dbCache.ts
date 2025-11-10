@@ -102,7 +102,7 @@ function initializePool(): Pool | null {
   }
 }
 
-function getPool(): Pool | null {
+export function getPool(): Pool | null {
   if (!pool && isDbEnabled) {
     pool = initializePool();
   }

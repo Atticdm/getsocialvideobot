@@ -12,7 +12,7 @@ import { join } from 'path';
 import { config } from '../src/core/config';
 import { logger } from '../src/core/logger';
 
-async function runMigration(): Promise<void> {
+async function runMigration(migrationFile?: string): Promise<void> {
   if (!config.DATABASE_URL || config.DATABASE_URL.trim().length === 0) {
     logger.error('DATABASE_URL is not set in environment variables');
     logger.info('Please add DATABASE_URL to your .env file');
@@ -34,7 +34,9 @@ async function runMigration(): Promise<void> {
     logger.info('✅ Successfully connected to PostgreSQL');
 
     // Чтение SQL файла миграции
-    const migrationPath = join(__dirname, '../migrations/001_create_cached_files_table.sql');
+    const migrationPath = migrationFile 
+      ? (migrationFile.startsWith('/') ? migrationFile : join(__dirname, '..', migrationFile))
+      : join(__dirname, '../migrations/001_create_cached_files_table.sql');
     const sql = readFileSync(migrationPath, 'utf-8');
 
     logger.info('Executing migration...');
@@ -85,7 +87,8 @@ async function runMigration(): Promise<void> {
 }
 
 if (require.main === module) {
-  runMigration()
+  const migrationFile = process.argv[2];
+  runMigration(migrationFile)
     .then(() => {
       logger.info('Migration script completed successfully');
       process.exit(0);

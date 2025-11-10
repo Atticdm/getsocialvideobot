@@ -27,6 +27,9 @@ import type { VoiceLanguage, VoicePreset } from '../types/voice';
 // Arena publishing functionality is temporarily disabled
 // import { getArenaDisplayName, isArenaPublishingEnabled, publishCandidateToken } from './publish';
 import { shutdownAnalytics, trackSystemEvent, trackUserEvent } from '../core/analytics';
+import { creditsCommand, buyCommand } from './commands/credits';
+import { handlePreCheckoutQuery, handleSuccessfulPayment } from '../core/payments/stars';
+import { getPaymentPackage, createPaymentButton } from '../core/payments/stars';
 
 type TranslationIntent =
   | { flow: 'translate'; stage: 'direction' }
@@ -152,6 +155,8 @@ export async function setupBot(): Promise<void> {
   bot.command('get', downloadCommand);
   bot.command('diag', diagCommand);
   bot.command('translate', translateCommand);
+  bot.command('credits', creditsCommand);
+  bot.command('buy', buyCommand);
 
   setupInlineHandlers(bot);
 
@@ -606,6 +611,50 @@ export async function setupBot(): Promise<void> {
     }
 
     await ctx.reply("I don't understand that message. Use /help to see available commands.");
+  });
+
+  // Payment handlers
+  bot.on('pre_checkout_query', async (ctx) => {
+    try {
+      await handlePreCheckoutQuery(ctx);
+    } catch (error: unknown) {
+      logger.error({ error }, 'Error handling pre-checkout query');
+      try {
+        await ctx.answerPreCheckoutQuery(false, 'Ошибка обработки платежа. Попробуйте позже.');
+      } catch {
+        // Ignore errors if already answered
+      }
+    }
+  });
+
+  bot.on('successful_payment', async (ctx) => {
+    try {
+      await handleSuccessfulPayment(ctx);
+    } catch (error: unknown) {
+      logger.error({ error }, 'Error handling successful payment');
+      await ctx.reply('❌ Ошибка обработки платежа. Обратитесь в поддержку.');
+    }
+  });
+
+  // Callback handlers for payment buttons
+  bot.action('buy_credits', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const packageInfo = getPaymentPackage();
+      await createPaymentButton(ctx, packageInfo);
+    } catch (error: unknown) {
+      logger.error({ error }, 'Error handling buy_credits callback');
+      await ctx.reply('❌ Ошибка создания платежа. Попробуйте позже.');
+    }
+  });
+
+  bot.action('payment_cancel', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('Отменено');
+      await ctx.deleteMessage();
+    } catch (error: unknown) {
+      logger.warn({ error }, 'Error handling payment_cancel callback');
+    }
   });
 
   bot.catch((err, ctx) => {

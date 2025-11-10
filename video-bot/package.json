@@ -13,7 +13,8 @@
     "setup": "./setup.sh",
     "migrate-cache": "ts-node scripts/migrate-cache-to-db.ts",
     "check-db": "ts-node scripts/check-db-connection.ts",
-    "migrate-db": "ts-node scripts/run-migration.ts"
+    "migrate-db": "ts-node scripts/run-migration.ts",
+    "migrate-payments": "ts-node scripts/run-migration.ts migrations/002_create_payments_tables.sql"
   },
   "keywords": [
     "telegram",
