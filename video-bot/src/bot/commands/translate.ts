@@ -20,6 +20,7 @@ import { VoicePreset } from '../../types/voice';
 import { trackUserEvent } from '../../core/analytics';
 import { checkCreditsAvailable, useCredit, refundCredit } from '../../core/payments/credits';
 import { getPaymentPackage } from '../../core/payments/stars';
+import { getRedsysPaymentPackage, isRedsysEnabled } from '../../core/payments/redsys';
 
 function isTelegramTimeout(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -170,27 +171,68 @@ export async function translateCommand(ctx: Context): Promise<void> {
 
   if (!creditsCheck.available) {
     release();
-    const packageInfo = getPaymentPackage();
     
     // Показываем сообщение с предложением купить кредиты
-    await ctx.reply(creditsCheck.message || '❌ У вас нет доступных кредитов', {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: `💳 Купить ${packageInfo.credits} кредитов за ${packageInfo.starsAmount} ⭐`,
-              callback_data: 'buy_credits',
-            },
+    const starsEnabled = true;
+    const redsysEnabled = isRedsysEnabled();
+    
+    if (starsEnabled && redsysEnabled) {
+      // Оба провайдера доступны - показываем выбор
+      const starsPackage = getPaymentPackage();
+      const redsysPackage = getRedsysPaymentPackage();
+      const priceRub = (redsysPackage.rublesAmount || 0) / 100;
+      
+      await ctx.reply(
+        creditsCheck.message || '❌ У вас нет доступных кредитов\n\n💳 Выберите способ оплаты:',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: `⭐ ${starsPackage.starsAmount} ⭐ Stars`,
+                  callback_data: 'buy_stars',
+                },
+                {
+                  text: `💳 ${priceRub} ${redsysPackage.currency || 'RUB'}`,
+                  callback_data: 'buy_redsys',
+                },
+              ],
+              [
+                {
+                  text: '❌ Отмена',
+                  callback_data: 'payment_cancel',
+                },
+              ],
+            ],
+          },
+        }
+      );
+    } else {
+      // Только один провайдер доступен
+      const packageInfo = starsEnabled ? getPaymentPackage() : getRedsysPaymentPackage();
+      const buttonText = starsEnabled
+        ? `💳 Купить ${packageInfo.credits} кредитов за ${packageInfo.starsAmount} ⭐`
+        : `💳 Купить ${packageInfo.credits} кредитов за ${((packageInfo.rublesAmount || 0) / 100).toFixed(2)} ${packageInfo.currency || 'RUB'}`;
+      
+      await ctx.reply(creditsCheck.message || '❌ У вас нет доступных кредитов', {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: buttonText,
+                callback_data: 'buy_credits',
+              },
+            ],
+            [
+              {
+                text: '❌ Отмена',
+                callback_data: 'payment_cancel',
+              },
+            ],
           ],
-          [
-            {
-              text: '❌ Отмена',
-              callback_data: 'payment_cancel',
-            },
-          ],
-        ],
-      },
-    });
+        },
+      });
+    }
     return;
   }
 

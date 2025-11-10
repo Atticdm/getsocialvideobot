@@ -30,6 +30,7 @@ import { shutdownAnalytics, trackSystemEvent, trackUserEvent } from '../core/ana
 import { creditsCommand, buyCommand } from './commands/credits';
 import { handlePreCheckoutQuery, handleSuccessfulPayment } from '../core/payments/stars';
 import { getPaymentPackage, createPaymentButton } from '../core/payments/stars';
+import { handleRedsysPreCheckoutQuery, handleRedsysSuccessfulPayment } from '../core/payments/redsys';
 import { termsCommand } from './commands/terms';
 import { supportCommand } from './commands/support';
 
@@ -620,7 +621,15 @@ export async function setupBot(): Promise<void> {
   // Payment handlers
   bot.on('pre_checkout_query', async (ctx) => {
     try {
-      await handlePreCheckoutQuery(ctx);
+      // Определяем провайдера по payload
+      if ('preCheckoutQuery' in ctx.update) {
+        const query = ctx.update.preCheckoutQuery as { invoice_payload?: string };
+        if (query.invoice_payload?.startsWith('redsys_')) {
+          await handleRedsysPreCheckoutQuery(ctx);
+        } else {
+          await handlePreCheckoutQuery(ctx);
+        }
+      }
     } catch (error: unknown) {
       logger.error({ error }, 'Error handling pre-checkout query');
       try {
@@ -633,7 +642,15 @@ export async function setupBot(): Promise<void> {
 
   bot.on('successful_payment', async (ctx) => {
     try {
-      await handleSuccessfulPayment(ctx);
+      // Определяем провайдера по payload
+      if ('message' in ctx.update && ctx.update.message && 'successful_payment' in ctx.update.message) {
+        const payment = ctx.update.message.successful_payment as { invoice_payload?: string };
+        if (payment.invoice_payload?.startsWith('redsys_')) {
+          await handleRedsysSuccessfulPayment(ctx);
+        } else {
+          await handleSuccessfulPayment(ctx);
+        }
+      }
     } catch (error: unknown) {
       logger.error({ error }, 'Error handling successful payment');
       await ctx.reply('❌ Ошибка обработки платежа. Обратитесь в поддержку.');
@@ -644,10 +661,33 @@ export async function setupBot(): Promise<void> {
   bot.action('buy_credits', async (ctx) => {
     try {
       await ctx.answerCbQuery();
+      // Вызываем команду /buy для показа выбора провайдера
+      await buyCommand(ctx);
+    } catch (error: unknown) {
+      logger.error({ error }, 'Error handling buy_credits callback');
+      await ctx.reply('❌ Ошибка создания платежа. Попробуйте позже.');
+    }
+  });
+
+  bot.action('buy_stars', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
       const packageInfo = getPaymentPackage();
       await createPaymentButton(ctx, packageInfo);
     } catch (error: unknown) {
-      logger.error({ error }, 'Error handling buy_credits callback');
+      logger.error({ error }, 'Error handling buy_stars callback');
+      await ctx.reply('❌ Ошибка создания платежа. Попробуйте позже.');
+    }
+  });
+
+  bot.action('buy_redsys', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const { getRedsysPaymentPackage, createRedsysPaymentButton } = await import('../core/payments/redsys');
+      const packageInfo = getRedsysPaymentPackage();
+      await createRedsysPaymentButton(ctx, packageInfo);
+    } catch (error: unknown) {
+      logger.error({ error }, 'Error handling buy_redsys callback');
       await ctx.reply('❌ Ошибка создания платежа. Попробуйте позже.');
     }
   });

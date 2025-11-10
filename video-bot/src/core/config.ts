@@ -26,6 +26,11 @@ const configSchema = z.object({
   PAYMENT_ENABLED: z.coerce.boolean().optional().default(true),
   STARS_PACKAGE_CREDITS: z.coerce.number().int().positive().optional().default(10),
   STARS_PACKAGE_PRICE: z.coerce.number().int().positive().optional().default(500), // Stars
+  REDSYS_ENABLED: z.coerce.boolean().optional().default(false),
+  REDSYS_PROVIDER_TOKEN: z.string().optional().default(''), // Provider token от BotFather
+  REDSYS_PACKAGE_CREDITS: z.coerce.number().int().positive().optional().default(10),
+  REDSYS_PACKAGE_PRICE_RUB: z.coerce.number().int().positive().optional().default(50000), // Рубли в копейках (500 руб = 50000 копеек)
+  REDSYS_CURRENCY: z.string().optional().default('RUB'), // RUB, EUR, USD
   POSTHOG_ENABLED: z.union([z.boolean(), z.string()]).optional(),
   POSTHOG_API_KEY: z.string().optional().default(''),
   POSTHOG_HOST: z.string().optional().default('https://us.i.posthog.com'),

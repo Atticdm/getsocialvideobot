@@ -1,5 +1,6 @@
 export type CreditType = 'free' | 'paid' | 'admin';
 export type FeatureType = 'translate' | 'voice_over';
+export type PaymentProvider = 'stars' | 'redsys';
 
 export interface CreditsCheckResult {
   available: boolean;
@@ -10,9 +11,12 @@ export interface CreditsCheckResult {
 
 export interface PaymentPackage {
   credits: number;
-  starsAmount: number;
+  starsAmount?: number; // Для Telegram Stars
+  rublesAmount?: number; // Для Redsys и других провайдеров (в копейках)
   priceUsd: number;
   description: string;
+  provider?: PaymentProvider; // Опционально для указания провайдера
+  currency?: string; // Валюта для провайдера (XTR для Stars, RUB/EUR/USD для Redsys)
 }
 
 export interface CreditsBalance {
