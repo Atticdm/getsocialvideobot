@@ -86,13 +86,19 @@ function initializePool(): Pool | null {
     });
 
     poolInstance.on('connect', () => {
-      logger.info('PostgreSQL pool connected');
+      logger.debug('PostgreSQL pool client connected');
     });
 
-    isDbEnabled = true;
-    logger.info('PostgreSQL cache pool initialized', {
-      min: config.DB_POOL_MIN,
-      max: config.DB_POOL_MAX,
+    // Проверяем подключение сразу при инициализации
+    poolInstance.query('SELECT NOW()', (err) => {
+      if (err) {
+        logger.error({ error: err }, 'Failed to test PostgreSQL connection during initialization');
+      } else {
+        logger.info('PostgreSQL pool initialized and connection tested successfully', {
+          min: config.DB_POOL_MIN,
+          max: config.DB_POOL_MAX,
+        });
+      }
     });
 
     return poolInstance;
@@ -103,9 +109,24 @@ function initializePool(): Pool | null {
 }
 
 export function getPool(): Pool | null {
-  if (!pool && isDbEnabled) {
-    pool = initializePool();
+  // Если пул уже инициализирован, возвращаем его
+  if (pool) {
+    return pool;
   }
+  
+  // Если БД отключена (DATABASE_URL не установлен), не пытаемся инициализировать
+  if (!config.DATABASE_URL || config.DATABASE_URL.trim().length === 0) {
+    return null;
+  }
+  
+  // Пытаемся инициализировать пул
+  if (!isDbEnabled) {
+    pool = initializePool();
+    if (pool) {
+      isDbEnabled = true;
+    }
+  }
+  
   return pool;
 }
 
