@@ -10,7 +10,8 @@ import { trackUserEvent } from '../../core/analytics';
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import type { Message } from 'telegraf/typings/core/types/typegram';
-import { isArenaPublishingEnabled } from '../publish';
+// Arena publishing functionality is temporarily disabled
+// import { isArenaPublishingEnabled } from '../publish';
 import {
   deleteCachedFile,
   getCachedFile,
@@ -327,11 +328,12 @@ export async function downloadCommand(ctx: Context): Promise<void> {
 
     const processingMessage = await ctx.reply('⏳ Download started... This may take a few minutes.');
 
+    // Arena publishing functionality is temporarily disabled
     // Use cached version if available and auto-publish not requested
-    const publishStateBefore = ctx.state as { publishToArena?: boolean | undefined };
-    if (publishStateBefore && publishStateBefore.publishToArena !== undefined) {
-      publishStateBefore.publishToArena = undefined;
-    }
+    // const publishStateBefore = ctx.state as { publishToArena?: boolean | undefined };
+    // if (publishStateBefore && publishStateBefore.publishToArena !== undefined) {
+    //   publishStateBefore.publishToArena = undefined;
+    // }
 
     if (cachedRecord) {
       try {
@@ -368,9 +370,10 @@ export async function downloadCommand(ctx: Context): Promise<void> {
           uploadType: cachedRecord.type,
         });
 
-        if (publishStateBefore && publishStateBefore.publishToArena !== undefined) {
-          publishStateBefore.publishToArena = undefined;
-        }
+        // Arena publishing disabled
+        // if (publishStateBefore && publishStateBefore.publishToArena !== undefined) {
+        //   publishStateBefore.publishToArena = undefined;
+        // }
 
         await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, cachedRecord.durationSeconds, cachedRecord.sizeBytes);
 
@@ -420,10 +423,11 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       // Check file size
       await ensureBelowLimit(result.filePath);
 
-      const publishState = ctx.state as { publishToArena?: boolean | undefined };
-      if (publishState && publishState.publishToArena !== undefined) {
-        publishState.publishToArena = undefined;
-      }
+      // Arena publishing functionality is temporarily disabled
+      // const publishState = ctx.state as { publishToArena?: boolean | undefined };
+      // if (publishState && publishState.publishToArena !== undefined) {
+      //   publishState.publishToArena = undefined;
+      // }
 
       const fileName = path.basename(result.filePath);
 
@@ -480,38 +484,40 @@ export async function downloadCommand(ctx: Context): Promise<void> {
         uploadType: uploadResult.type,
       });
 
-      if (isArenaPublishingEnabled() && userId) {
-        const document = 'document' in sentMessage ? sentMessage.document : undefined;
-        const video = 'video' in sentMessage ? sentMessage.video : undefined;
-        const fileId = video?.file_id ?? document?.file_id;
-        if (fileId) {
-          await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size ?? video?.file_size ?? document?.file_size);
+      // Arena publishing functionality is temporarily disabled
+      // if (isArenaPublishingEnabled() && userId) {
+      //   const document = 'document' in sentMessage ? sentMessage.document : undefined;
+      //   const video = 'video' in sentMessage ? sentMessage.video : undefined;
+      //   const fileId = video?.file_id ?? document?.file_id;
+      //   if (fileId) {
+      //     await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size ?? video?.file_size ?? document?.file_size);
 
-          // const token = registerPublishCandidate({
-          //   ownerId: userId,
-          //   fileId,
-          //   fileName,
-          //   fileType: uploadResult.type,
-          //   originalUrl: url,
-          // });
+      //     // const token = registerPublishCandidate({
+      //     //   ownerId: userId,
+      //     //   fileId,
+      //     //   fileName,
+      //     //   fileType: uploadResult.type,
+      //     //   originalUrl: url,
+      //     // });
 
-          // await ctx.reply(
-          //   'Хочешь поделиться роликом в Reels Arena?',
-          //   Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
-          // );
-          // trackUserEvent('download.publish_prompt', userId, {
-          //   provider: providerName,
-          //   uploadType: uploadResult.type,
-          // });
-        } else {
-          logger.warn(
-            { userId, url },
-            'Unable to register publish candidate because document file_id is missing'
-          );
-        }
-      } else {
-        await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size);
-      }
+      //     // await ctx.reply(
+      //     //   'Хочешь поделиться роликом в Reels Arena?',
+      //     //   Markup.inlineKeyboard([[Markup.button.callback('📣 Опубликовать в канал', `publish:${token}`)]])
+      //     // );
+      //     // trackUserEvent('download.publish_prompt', userId, {
+      //     //   provider: providerName,
+      //     //   uploadType: uploadResult.type,
+      //     // });
+      //   } else {
+      //     logger.warn(
+      //       { userId, url },
+      //       'Unable to register publish candidate because document file_id is missing'
+      //     );
+      //   }
+      // } else {
+      //   await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size);
+      // }
+      await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size);
 
     } finally {
       // Clean up session directory
