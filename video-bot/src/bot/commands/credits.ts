@@ -2,7 +2,8 @@ import { Context } from 'telegraf';
 import { Markup } from 'telegraf';
 import { getCreditsBalance, getUsageStats } from '../../core/payments/credits';
 import { getPaymentPackage, createPaymentButton } from '../../core/payments/stars';
-import { getRedsysPaymentPackage, createRedsysPaymentButton, isRedsysEnabled } from '../../core/payments/redsys';
+// Redsys оплата временно отключена
+// import { getRedsysPaymentPackage, createRedsysPaymentButton, isRedsysEnabled } from '../../core/payments/redsys';
 import { config } from '../../core/config';
 import { logger } from '../../core/logger';
 import { trackUserEvent } from '../../core/analytics';
@@ -65,39 +66,40 @@ export async function buyCommand(ctx: Context): Promise<void> {
   }
 
   try {
-    const starsEnabled = true; // Stars всегда доступен если платежи включены
-    const redsysEnabled = isRedsysEnabled();
+    // Redsys оплата временно отключена, используем только Telegram Stars
+    // const starsEnabled = true; // Stars всегда доступен если платежи включены
+    // const redsysEnabled = isRedsysEnabled();
 
     // Если доступны оба провайдера, показываем выбор
-    if (starsEnabled && redsysEnabled) {
-      const starsPackage = getPaymentPackage();
-      const redsysPackage = getRedsysPaymentPackage();
-      const priceRub = (redsysPackage.rublesAmount || 0) / 100;
-      const starsAmount = starsPackage.starsAmount || 500;
+    // if (starsEnabled && redsysEnabled) {
+    //   const starsPackage = getPaymentPackage();
+    //   const redsysPackage = getRedsysPaymentPackage();
+    //   const priceRub = (redsysPackage.rublesAmount || 0) / 100;
+    //   const starsAmount = starsPackage.starsAmount || 500;
 
-      await ctx.reply(
-        `💳 Выберите способ оплаты:\n\n⭐ Telegram Stars\n• ${starsPackage.credits} кредитов за ${starsAmount} ⭐ Stars ($${starsPackage.priceUsd})\n\n💳 Redsys (карта)\n• ${redsysPackage.credits} кредитов за ${priceRub} ${redsysPackage.currency || 'RUB'}`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [
-                Markup.button.callback('⭐ Оплатить Stars', 'buy_stars'),
-                Markup.button.callback('💳 Оплатить картой', 'buy_redsys'),
-              ],
-              [Markup.button.callback('❌ Отмена', 'payment_cancel')],
-            ],
-          },
-        }
-      );
-    } else if (redsysEnabled) {
-      // Только Redsys
-      const packageInfo = getRedsysPaymentPackage();
-      await createRedsysPaymentButton(ctx, packageInfo);
-    } else {
+    //   await ctx.reply(
+    //     `💳 Выберите способ оплаты:\n\n⭐ Telegram Stars\n• ${starsPackage.credits} кредитов за ${starsAmount} ⭐ Stars ($${starsPackage.priceUsd})\n\n💳 Redsys (карта)\n• ${redsysPackage.credits} кредитов за ${priceRub} ${redsysPackage.currency || 'RUB'}`,
+    //     {
+    //       reply_markup: {
+    //         inline_keyboard: [
+    //           [
+    //             Markup.button.callback('⭐ Оплатить Stars', 'buy_stars'),
+    //             Markup.button.callback('💳 Оплатить картой', 'buy_redsys'),
+    //           ],
+    //           [Markup.button.callback('❌ Отмена', 'payment_cancel')],
+    //         ],
+    //       },
+    //     }
+    //   );
+    // } else if (redsysEnabled) {
+    //   // Только Redsys
+    //   const packageInfo = getRedsysPaymentPackage();
+    //   await createRedsysPaymentButton(ctx, packageInfo);
+    // } else {
       // Только Stars (по умолчанию)
       const packageInfo = getPaymentPackage();
       await createPaymentButton(ctx, packageInfo);
-    }
+    // }
 
     trackUserEvent('command.buy', userId, { username });
   } catch (error: unknown) {

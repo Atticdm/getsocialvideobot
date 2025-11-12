@@ -4,7 +4,8 @@ import { logger } from '../logger';
 import type { CreditsCheckResult, CreditsBalance, FeatureType, CreditType, UsageStats } from './types';
 import { isAdmin } from './admin';
 import { getPool as getDbPool, closeDbPool } from '../dbCache';
-import { isRedsysEnabled, getRedsysPaymentPackage } from './redsys';
+// Redsys оплата временно отключена
+// import { isRedsysEnabled, getRedsysPaymentPackage } from './redsys';
 
 // Prepared statements для производительности
 const GET_OR_CREATE_USER_CREDITS_QUERY = `
@@ -174,8 +175,9 @@ export async function checkCreditsAvailable(
     }
 
     // Нет доступных кредитов - формируем сообщение с учетом доступных провайдеров
-    const starsEnabled = true;
-    const redsysEnabled = isRedsysEnabled();
+    // Redsys оплата временно отключена, используем только Telegram Stars
+    // const starsEnabled = true;
+    // const redsysEnabled = isRedsysEnabled();
     
     const packageCredits = config.STARS_PACKAGE_CREDITS || 10;
     const starsAmount = config.STARS_PACKAGE_PRICE || 500;
@@ -183,17 +185,17 @@ export async function checkCreditsAvailable(
     
     let message = `❌ У вас нет доступных кредитов для ${feature === 'translate' ? 'перевода' : 'озвучки'}\n\n📊 Ваш баланс:\n• Бесплатный кредит: использован ✅\n• Платных кредитов: 0\n\n💰 Доступные способы оплаты:`;
     
-    if (starsEnabled && redsysEnabled) {
-      const redsysPackage = getRedsysPaymentPackage();
-      const priceRub = (redsysPackage.rublesAmount || 0) / 100;
-      message += `\n• ${packageCredits} кредитов за ${starsAmount} ⭐ Stars ($${priceUsd})\n• ${redsysPackage.credits} кредитов за ${priceRub} ${redsysPackage.currency || 'RUB'}`;
-    } else if (starsEnabled) {
+    // if (starsEnabled && redsysEnabled) {
+    //   const redsysPackage = getRedsysPaymentPackage();
+    //   const priceRub = (redsysPackage.rublesAmount || 0) / 100;
+    //   message += `\n• ${packageCredits} кредитов за ${starsAmount} ⭐ Stars ($${priceUsd})\n• ${redsysPackage.credits} кредитов за ${priceRub} ${redsysPackage.currency || 'RUB'}`;
+    // } else if (starsEnabled) {
       message += `\n• ${packageCredits} кредитов за $${priceUsd} (${starsAmount} ⭐ Stars)`;
-    } else if (redsysEnabled) {
-      const redsysPackage = getRedsysPaymentPackage();
-      const priceRub = (redsysPackage.rublesAmount || 0) / 100;
-      message += `\n• ${redsysPackage.credits} кредитов за ${priceRub} ${redsysPackage.currency || 'RUB'}`;
-    }
+    // } else if (redsysEnabled) {
+    //   const redsysPackage = getRedsysPaymentPackage();
+    //   const priceRub = (redsysPackage.rublesAmount || 0) / 100;
+    //   message += `\n• ${redsysPackage.credits} кредитов за ${priceRub} ${redsysPackage.currency || 'RUB'}`;
+    // }
 
     return {
       available: false,

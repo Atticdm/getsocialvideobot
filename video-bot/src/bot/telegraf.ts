@@ -30,11 +30,12 @@ import { shutdownAnalytics, trackSystemEvent, trackUserEvent } from '../core/ana
 import { creditsCommand, buyCommand } from './commands/credits';
 import { handlePreCheckoutQuery, handleSuccessfulPayment } from '../core/payments/stars';
 import { getPaymentPackage, createPaymentButton } from '../core/payments/stars';
-import { handleRedsysPreCheckoutQuery, handleRedsysSuccessfulPayment } from '../core/payments/redsys';
+// Redsys оплата временно отключена
+// import { handleRedsysPreCheckoutQuery, handleRedsysSuccessfulPayment } from '../core/payments/redsys';
 import { termsCommand } from './commands/terms';
 import { supportCommand } from './commands/support';
 import { checkCreditsAvailable } from '../core/payments/credits';
-import { getRedsysPaymentPackage, isRedsysEnabled } from '../core/payments/redsys';
+// import { getRedsysPaymentPackage, isRedsysEnabled } from '../core/payments/redsys';
 import { Markup } from 'telegraf';
 
 type TranslationIntent =
@@ -207,33 +208,32 @@ export async function setupBot(): Promise<void> {
       
       if (!creditsCheck.available) {
         // Показываем сообщение с предложением купить кредиты
-        const starsEnabled = true;
-        const redsysEnabled = isRedsysEnabled();
+        // Redsys оплата временно отключена, используем только Telegram Stars
+        // const starsEnabled = true;
+        // const redsysEnabled = isRedsysEnabled();
         
-        if (starsEnabled && redsysEnabled) {
-          // Оба провайдера доступны - показываем выбор
-          await ctx.reply(
-            creditsCheck.message || '❌ У вас нет доступных кредитов для перевода\n\n💳 Выберите способ оплаты:',
-            {
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    Markup.button.callback('⭐ Оплатить Stars', 'buy_stars'),
-                    Markup.button.callback('💳 Оплатить картой', 'buy_redsys'),
-                  ],
-                  [
-                    Markup.button.callback('❌ Отмена', 'payment_cancel'),
-                  ],
-                ],
-              },
-            }
-          );
-        } else {
-          // Только один провайдер доступен
-          const packageInfo = starsEnabled ? getPaymentPackage() : getRedsysPaymentPackage();
-          const buttonText = starsEnabled
-            ? `💳 Купить ${packageInfo.credits} кредитов за ${packageInfo.starsAmount || 500} ⭐`
-            : `💳 Купить ${packageInfo.credits} кредитов за ${((packageInfo.rublesAmount || 0) / 100).toFixed(2)} ${packageInfo.currency || 'RUB'}`;
+        // if (starsEnabled && redsysEnabled) {
+        //   // Оба провайдера доступны - показываем выбор
+        //   await ctx.reply(
+        //     creditsCheck.message || '❌ У вас нет доступных кредитов для перевода\n\n💳 Выберите способ оплаты:',
+        //     {
+        //       reply_markup: {
+        //         inline_keyboard: [
+        //           [
+        //             Markup.button.callback('⭐ Оплатить Stars', 'buy_stars'),
+        //             Markup.button.callback('💳 Оплатить картой', 'buy_redsys'),
+        //           ],
+        //           [
+        //             Markup.button.callback('❌ Отмена', 'payment_cancel'),
+        //           ],
+        //         ],
+        //       },
+        //     }
+        //   );
+        // } else {
+          // Только Stars доступен
+          const packageInfo = getPaymentPackage();
+          const buttonText = `💳 Купить ${packageInfo.credits} кредитов за ${packageInfo.starsAmount || 500} ⭐`;
           
           await ctx.reply(creditsCheck.message || '❌ У вас нет доступных кредитов для перевода', {
             reply_markup: {
@@ -247,7 +247,7 @@ export async function setupBot(): Promise<void> {
               ],
             },
           });
-        }
+        // }
         return;
       }
     } catch (error: unknown) {
@@ -277,33 +277,32 @@ export async function setupBot(): Promise<void> {
       
       if (!creditsCheck.available) {
         // Показываем сообщение с предложением купить кредиты
-        const starsEnabled = true;
-        const redsysEnabled = isRedsysEnabled();
+        // Redsys оплата временно отключена, используем только Telegram Stars
+        // const starsEnabled = true;
+        // const redsysEnabled = isRedsysEnabled();
         
-        if (starsEnabled && redsysEnabled) {
-          // Оба провайдера доступны - показываем выбор
-          await ctx.reply(
-            creditsCheck.message || '❌ У вас нет доступных кредитов для озвучки\n\n💳 Выберите способ оплаты:',
-            {
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    Markup.button.callback('⭐ Оплатить Stars', 'buy_stars'),
-                    Markup.button.callback('💳 Оплатить картой', 'buy_redsys'),
-                  ],
-                  [
-                    Markup.button.callback('❌ Отмена', 'payment_cancel'),
-                  ],
-                ],
-              },
-            }
-          );
-        } else {
-          // Только один провайдер доступен
-          const packageInfo = starsEnabled ? getPaymentPackage() : getRedsysPaymentPackage();
-          const buttonText = starsEnabled
-            ? `💳 Купить ${packageInfo.credits} кредитов за ${packageInfo.starsAmount || 500} ⭐`
-            : `💳 Купить ${packageInfo.credits} кредитов за ${((packageInfo.rublesAmount || 0) / 100).toFixed(2)} ${packageInfo.currency || 'RUB'}`;
+        // if (starsEnabled && redsysEnabled) {
+        //   // Оба провайдера доступны - показываем выбор
+        //   await ctx.reply(
+        //     creditsCheck.message || '❌ У вас нет доступных кредитов для озвучки\n\n💳 Выберите способ оплаты:',
+        //     {
+        //       reply_markup: {
+        //         inline_keyboard: [
+        //           [
+        //             Markup.button.callback('⭐ Оплатить Stars', 'buy_stars'),
+        //             Markup.button.callback('💳 Оплатить картой', 'buy_redsys'),
+        //           ],
+        //           [
+        //             Markup.button.callback('❌ Отмена', 'payment_cancel'),
+        //           ],
+        //         ],
+        //       },
+        //     }
+        //   );
+        // } else {
+          // Только Stars доступен
+          const packageInfo = getPaymentPackage();
+          const buttonText = `💳 Купить ${packageInfo.credits} кредитов за ${packageInfo.starsAmount || 500} ⭐`;
           
           await ctx.reply(creditsCheck.message || '❌ У вас нет доступных кредитов для озвучки', {
             reply_markup: {
@@ -317,7 +316,7 @@ export async function setupBot(): Promise<void> {
               ],
             },
           });
-        }
+        // }
         return;
       }
     } catch (error: unknown) {
@@ -735,13 +734,14 @@ export async function setupBot(): Promise<void> {
   bot.on('pre_checkout_query', async (ctx) => {
     try {
       // Определяем провайдера по payload
+      // Redsys оплата временно отключена, обрабатываем только Stars
       if ('preCheckoutQuery' in ctx.update) {
-        const query = ctx.update.preCheckoutQuery as { invoice_payload?: string };
-        if (query.invoice_payload?.startsWith('redsys_')) {
-          await handleRedsysPreCheckoutQuery(ctx);
-        } else {
+        // const query = ctx.update.preCheckoutQuery as { invoice_payload?: string };
+        // if (query.invoice_payload?.startsWith('redsys_')) {
+        //   await handleRedsysPreCheckoutQuery(ctx);
+        // } else {
           await handlePreCheckoutQuery(ctx);
-        }
+        // }
       }
     } catch (error: unknown) {
       logger.error({ error }, 'Error handling pre-checkout query');
@@ -756,13 +756,14 @@ export async function setupBot(): Promise<void> {
   bot.on('successful_payment', async (ctx) => {
     try {
       // Определяем провайдера по payload
+      // Redsys оплата временно отключена, обрабатываем только Stars
       if ('message' in ctx.update && ctx.update.message && 'successful_payment' in ctx.update.message) {
-        const payment = ctx.update.message.successful_payment as { invoice_payload?: string };
-        if (payment.invoice_payload?.startsWith('redsys_')) {
-          await handleRedsysSuccessfulPayment(ctx);
-        } else {
+        // const payment = ctx.update.message.successful_payment as { invoice_payload?: string };
+        // if (payment.invoice_payload?.startsWith('redsys_')) {
+        //   await handleRedsysSuccessfulPayment(ctx);
+        // } else {
           await handleSuccessfulPayment(ctx);
-        }
+        // }
       }
     } catch (error: unknown) {
       logger.error({ error }, 'Error handling successful payment');
@@ -793,17 +794,18 @@ export async function setupBot(): Promise<void> {
     }
   });
 
-  bot.action('buy_redsys', async (ctx) => {
-    try {
-      await ctx.answerCbQuery();
-      const { getRedsysPaymentPackage, createRedsysPaymentButton } = await import('../core/payments/redsys');
-      const packageInfo = getRedsysPaymentPackage();
-      await createRedsysPaymentButton(ctx, packageInfo);
-    } catch (error: unknown) {
-      logger.error({ error }, 'Error handling buy_redsys callback');
-      await ctx.reply('❌ Ошибка создания платежа. Попробуйте позже.');
-    }
-  });
+  // Redsys оплата временно отключена
+  // bot.action('buy_redsys', async (ctx) => {
+  //   try {
+  //     await ctx.answerCbQuery();
+  //     const { getRedsysPaymentPackage, createRedsysPaymentButton } = await import('../core/payments/redsys');
+  //     const packageInfo = getRedsysPaymentPackage();
+  //     await createRedsysPaymentButton(ctx, packageInfo);
+  //   } catch (error: unknown) {
+  //     logger.error({ error }, 'Error handling buy_redsys callback');
+  //     await ctx.reply('❌ Ошибка создания платежа. Попробуйте позже.');
+  //   }
+  // });
 
   bot.action('payment_cancel', async (ctx) => {
     try {
