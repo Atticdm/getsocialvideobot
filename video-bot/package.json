@@ -16,7 +16,8 @@
     "test-db": "ts-node scripts/test-db-connection.ts",
     "migrate-db": "ts-node scripts/run-migration.ts",
     "migrate-payments": "ts-node scripts/run-migration.ts migrations/002_create_payments_tables.sql",
-    "migrate-promo": "ts-node scripts/run-migration.ts migrations/003_create_promo_codes_tables.sql",
+    "migrate-promo": "node scripts/run-migration.js migrations/003_create_promo_codes_tables.sql",
+    "migrate-promo:dev": "ts-node scripts/run-migration.ts migrations/003_create_promo_codes_tables.sql",
     "check-promo-tables": "ts-node scripts/check-promo-tables.ts"
   },
   "keywords": [

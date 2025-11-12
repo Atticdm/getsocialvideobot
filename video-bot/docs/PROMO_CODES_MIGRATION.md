@@ -6,6 +6,17 @@
 
 ## Решение: Выполнить миграцию
 
+### ⚠️ ВАЖНО: Если деплой падает на этапе "Pre-deploy command"
+
+Если вы видите ошибку "Pre-deploy command failed" в Railway:
+
+1. **Откройте Railway Dashboard** → ваш сервис → **Settings**
+2. Найдите раздел **"Deploy"** или **"Pre-deploy Command"**
+3. **Удалите или закомментируйте** команду `npm run migrate-promo` из pre-deploy
+4. Выполните миграцию вручную после деплоя (см. способы ниже)
+
+**Почему?** Pre-deploy команды выполняются до установки зависимостей и могут не иметь доступа к `ts-node` или `DATABASE_URL`.
+
 ### Способ 1: Через SSH на сервере (Рекомендуется)
 
 1. Подключитесь к серверу через SSH:
@@ -35,6 +46,8 @@
 ```bash
 railway run npm run migrate-promo
 ```
+
+**Примечание:** Команда `migrate-promo` теперь использует скомпилированный JavaScript (`node`), а не `ts-node`, поэтому работает в production окружении.
 
 ### Способ 3: Через Railway Web Console
 
