@@ -86,6 +86,9 @@ jobs:
           echo "Building project..."
           npm run build || { echo "ERROR: npm build failed"; exit 1; }
           
+          echo "Running promo codes migration..."
+          npm run migrate-promo || { echo "WARNING: Promo migration failed, but continuing deployment"; }
+          
           echo "Restarting PM2 process..."
           pm2 restart video-bot --update-env || { echo "ERROR: pm2 restart failed"; exit 1; }
           
