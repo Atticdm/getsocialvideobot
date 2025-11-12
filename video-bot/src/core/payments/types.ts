@@ -1,4 +1,4 @@
-export type CreditType = 'free' | 'paid' | 'admin';
+export type CreditType = 'free' | 'paid' | 'admin' | 'promo';
 export type FeatureType = 'translate' | 'voice_over';
 export type PaymentProvider = 'stars' | 'redsys';
 

@@ -34,6 +34,7 @@ import { getPaymentPackage, createPaymentButton } from '../core/payments/stars';
 // import { handleRedsysPreCheckoutQuery, handleRedsysSuccessfulPayment } from '../core/payments/redsys';
 import { termsCommand } from './commands/terms';
 import { supportCommand } from './commands/support';
+import { promoCommand, handlePromoCodeMessage } from './commands/promo';
 import { checkCreditsAvailable } from '../core/payments/credits';
 // import { getRedsysPaymentPackage, isRedsysEnabled } from '../core/payments/redsys';
 import { Markup } from 'telegraf';
@@ -164,6 +165,8 @@ export async function setupBot(): Promise<void> {
   bot.command('translate', translateCommand);
   bot.command('credits', creditsCommand);
   bot.command('buy', buyCommand);
+  bot.command('promo', promoCommand);
+  bot.command('promocode', promoCommand); // Альтернативная команда
   bot.command('terms', termsCommand);
   bot.command('support', supportCommand);
 
@@ -633,6 +636,14 @@ export async function setupBot(): Promise<void> {
 
     if (text && text.startsWith('/')) {
       return;
+    }
+
+    // Проверяем, не является ли сообщение промокодом
+    if (text && userId) {
+      const handled = await handlePromoCodeMessage(ctx);
+      if (handled) {
+        return; // Промокод был успешно обработан
+      }
     }
 
      // Arena publishing functionality is temporarily disabled

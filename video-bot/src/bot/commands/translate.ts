@@ -180,7 +180,7 @@ export async function translateCommand(ctx: Context): Promise<void> {
   let statusMessageId: number | undefined;
   const progressLines: string[] = [];
   let creditUsed = false;
-  let creditType: 'free' | 'paid' | 'admin' | null = creditsCheck.creditType;
+  let creditType: 'free' | 'paid' | 'admin' | 'promo' | null = creditsCheck.creditType;
 
   const appendProgress = async (line: string) => {
     progressLines.push(line);

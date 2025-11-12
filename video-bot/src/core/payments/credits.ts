@@ -4,6 +4,7 @@ import { logger } from '../logger';
 import type { CreditsCheckResult, CreditsBalance, FeatureType, CreditType, UsageStats } from './types';
 import { isAdmin } from './admin';
 import { getPool as getDbPool, closeDbPool } from '../dbCache';
+import { checkUnlimitedPromo, checkPromoFeatureAccess } from './promo';
 // Redsys оплата временно отключена
 // import { isRedsysEnabled, getRedsysPaymentPackage } from './redsys';
 
@@ -141,6 +142,27 @@ export async function checkCreditsAvailable(
   try {
     await ensureUserCreditsRecord(userId, pool);
 
+    // Проверяем промокоды ПЕРЕД проверкой обычных кредитов
+    // 1. Проверяем безлимитный промокод (GODMODE)
+    const hasUnlimited = await checkUnlimitedPromo(userId);
+    if (hasUnlimited) {
+      return {
+        available: true,
+        creditType: 'promo',
+        creditsRemaining: Infinity,
+      };
+    }
+
+    // 2. Проверяем специфичные промокоды для функции (free_translations, free_voice_overs)
+    const promoAccess = await checkPromoFeatureAccess(userId, feature);
+    if (promoAccess.hasAccess) {
+      return {
+        available: true,
+        creditType: 'promo',
+        creditsRemaining: Infinity, // Промокоды дают доступ без ограничений
+      };
+    }
+
     const result = await pool.query(GET_USER_CREDITS_QUERY, [userId]);
     
     if (result.rows.length === 0) {
@@ -230,6 +252,12 @@ export async function useCredit(
 
   if (!userId) {
     return false;
+  }
+
+  // Промокоды не тратят кредиты (безлимитный доступ или бесплатные использования)
+  if (creditType === 'promo') {
+    await logUsage(userId, feature, 'promo', provider, true);
+    return true;
   }
 
   // Если платежи отключены, не списываем кредиты
