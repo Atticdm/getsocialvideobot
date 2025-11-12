@@ -323,7 +323,7 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
     });
     
     // Если stderr пустой, это может означать проблему с запуском yt-dlp
-    if (!fullStderr && !fullStdout && last?.code !== 0) {
+    if (!fullStderr && !fullStdout && last && last.code !== 0) {
       logger.error('yt-dlp returned error code but no output - possible installation issue', {
         code: last.code,
         url,
