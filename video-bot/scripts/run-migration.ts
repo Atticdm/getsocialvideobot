@@ -46,27 +46,64 @@ async function runMigration(migrationFile?: string): Promise<void> {
 
     logger.info('✅ Migration completed successfully');
 
-    // Проверка результата
-    const tableCheck = await pool.query(`
-      SELECT 
-        COUNT(*) as index_count
-      FROM pg_indexes 
-      WHERE tablename = 'cached_files'
-    `);
+    // Определяем, какая миграция была выполнена, для проверки
+    const migrationFileName = migrationPath.split('/').pop() || '';
+    
+    if (migrationFileName.includes('promo_codes')) {
+      // Проверка таблиц промокодов
+      const promoTables = ['promo_codes', 'promo_code_usage', 'user_promo_status'];
+      for (const tableName of promoTables) {
+        const tableCheck = await pool.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name = $1
+          ) as exists
+        `, [tableName]);
+        
+        if (tableCheck.rows[0]?.exists) {
+          logger.info(`✅ Table ${tableName} created successfully`);
+          
+          // Проверяем промокод GODMODE
+          if (tableName === 'promo_codes') {
+            const godmodeCheck = await pool.query(`
+              SELECT code, type, max_uses, used_count 
+              FROM promo_codes 
+              WHERE code = 'GODMODE'
+            `);
+            if (godmodeCheck.rows.length > 0) {
+              logger.info('✅ Promo code GODMODE created successfully', { 
+                promo: godmodeCheck.rows[0] 
+              });
+            }
+          }
+        } else {
+          logger.warn(`⚠️  Table ${tableName} was not created`);
+        }
+      }
+    } else {
+      // Проверка результата для других миграций
+      const tableCheck = await pool.query(`
+        SELECT 
+          COUNT(*) as index_count
+        FROM pg_indexes 
+        WHERE tablename = 'cached_files'
+      `);
 
-    logger.info({ indexesCreated: tableCheck.rows[0].index_count }, 'Migration verification');
+      logger.info({ indexesCreated: tableCheck.rows[0].index_count }, 'Migration verification');
 
-    // Проверка структуры таблицы
-    const columns = await pool.query(`
-      SELECT column_name, data_type 
-      FROM information_schema.columns 
-      WHERE table_name = 'cached_files'
-      ORDER BY ordinal_position
-    `);
+      // Проверка структуры таблицы
+      const columns = await pool.query(`
+        SELECT column_name, data_type 
+        FROM information_schema.columns 
+        WHERE table_name = 'cached_files'
+        ORDER BY ordinal_position
+      `);
 
-    logger.info({ columns: columns.rows.map(r => `${r.column_name} (${r.data_type})`) }, 'Table structure');
+      logger.info({ columns: columns.rows.map(r => `${r.column_name} (${r.data_type})`) }, 'Table structure');
+    }
 
-    logger.info('✅ All checks passed! Table cached_files is ready to use.');
+    logger.info('✅ All checks passed! Migration is ready to use.');
   } catch (error: unknown) {
     logger.error({ error }, '❌ Migration failed');
     
