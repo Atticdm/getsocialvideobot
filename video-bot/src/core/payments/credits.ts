@@ -143,7 +143,7 @@ export async function checkCreditsAvailable(
     await ensureUserCreditsRecord(userId, pool);
 
     // Проверяем промокоды ПЕРЕД проверкой обычных кредитов
-    // 1. Проверяем безлимитный промокод (GODMODE)
+    // 1. Проверяем безлимитный промокод
     const hasUnlimited = await checkUnlimitedPromo(userId);
     if (hasUnlimited) {
       return {

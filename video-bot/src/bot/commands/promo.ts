@@ -19,7 +19,7 @@ export async function promoCommand(ctx: Context): Promise<void> {
   if (messageText) {
     const parts = messageText.split(/\s+/);
     if (parts.length > 1 && parts[1]) {
-      // Промокод указан в команде: /promo GODMODE
+      // Промокод указан в команде: /promo PROMO2024
       promoCode = parts[1].toUpperCase().trim();
     }
   }
@@ -29,7 +29,7 @@ export async function promoCommand(ctx: Context): Promise<void> {
     await ctx.reply(
       '🎁 **Активация промокода**\n\n' +
       'Введите промокод, который хотите активировать.\n\n' +
-      'Пример: `/promo GODMODE`\n\n' +
+      'Пример: `/promo PROMO2024`\n\n' +
       'Или просто отправьте промокод в следующем сообщении.',
       { parse_mode: 'Markdown' }
     );
