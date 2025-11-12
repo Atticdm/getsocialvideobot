@@ -61,19 +61,41 @@ export async function run(
     
     if (error && typeof error === 'object' && 'exitCode' in error) {
       const execaError = error as any;
+      const stdout = execaError.stdout || '';
+      const stderr = execaError.stderr || '';
+      
+      // Логируем полные stdout и stderr для диагностики
       logger.error('Command execution failed', {
         command,
-        args,
-        commandLine: `${command} ${Array.isArray(args) ? args.join(' ') : ''}`,
+        args: args.slice(0, 10), // Первые 10 аргументов для краткости
+        commandLine: `${command} ${Array.isArray(args) ? args.slice(0, 5).join(' ') : ''}...`,
         durationMs,
         code: execaError.exitCode,
-        stdout: execaError.stdout,
-        stderr: execaError.stderr,
+        stdoutLength: stdout.length,
+        stderrLength: stderr.length,
+        stdoutPreview: stdout.slice(0, 1000), // Первые 1000 символов
+        stderrPreview: stderr.slice(0, 1000), // Первые 1000 символов
       });
+      
+      // Логируем полные stderr и stdout отдельно для длинных выводов
+      if (stderr.length > 1000) {
+        logger.error('Full stderr output', { 
+          command, 
+          stderr,
+          stderrLength: stderr.length 
+        });
+      }
+      if (stdout.length > 1000) {
+        logger.error('Full stdout output', { 
+          command, 
+          stdout,
+          stdoutLength: stdout.length 
+        });
+      }
 
       return {
-        stdout: execaError.stdout || '',
-        stderr: execaError.stderr || '',
+        stdout: stdout,
+        stderr: stderr,
         code: execaError.exitCode || 1,
         durationMs,
       };

@@ -196,6 +196,24 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
   const normalizedUrl = normalizeReelUrl(url);
   logger.info('Starting Instagram video download', { url, normalizedUrl, outDir });
 
+  // Проверяем доступность yt-dlp перед началом
+  try {
+    const { run } = await import('../../core/exec');
+    const versionCheck = await run('yt-dlp', ['--version'], { timeout: 5000 });
+    if (versionCheck.code !== 0) {
+      logger.error('yt-dlp is not available or not working', { 
+        stderr: versionCheck.stderr,
+        stdout: versionCheck.stdout 
+      });
+      throw new AppError(ERROR_CODES.ERR_INTERNAL, 'yt-dlp is not available. Please check installation.');
+    }
+    logger.debug('yt-dlp version check passed', { version: versionCheck.stdout.trim() });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    logger.error('Failed to check yt-dlp availability', { error });
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Failed to verify yt-dlp installation', { originalError: error });
+  }
+
   const base = createBaseArgs(outDir);
   const cookiesPath = await prepareInstagramCookies(outDir);
   const attempts = buildInstagramAttempts(url, normalizedUrl, cookiesPath);
@@ -208,9 +226,25 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
       if (a.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
       args.push(a.target);
       logger.info('yt-dlp attempt (instagram)', { attempt: i + 1, target: a.target, cookies: a.useCookies && !!cookiesPath, ua: a.ua.includes('Android') ? 'android' : 'desktop' });
-      if (config.DEBUG_YTDLP) logger.debug('yt-dlp args (instagram)', { args });
+      if (config.DEBUG_YTDLP || config.LOG_LEVEL === 'debug') {
+        logger.debug('yt-dlp args (instagram)', { args });
+      }
+      
       const result = await run('yt-dlp', args, { timeout: 300000 });
       last = result;
+      
+      // Логируем результат каждой попытки для диагностики
+      if (result.code !== 0) {
+        logger.warn('yt-dlp attempt failed (instagram)', {
+          attempt: i + 1,
+          target: a.target,
+          code: result.code,
+          stderrLength: result.stderr.length,
+          stdoutLength: result.stdout.length,
+          stderrPreview: result.stderr.slice(0, 500),
+          stdoutPreview: result.stdout.slice(0, 200),
+        });
+      }
 
       if (result.code === 0) {
         const filePath = await findDownloadedFile(outDir);
@@ -272,14 +306,30 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
     }
     
     // Log full stderr/stdout for troubleshooting (always log in case of failure)
+    const fullStderr = last?.stderr || '';
+    const fullStdout = last?.stdout || '';
+    
     logger.error('Full yt-dlp stderr (instagram)', { 
-      stderr: last?.stderr || '',
-      stderrLength: (last?.stderr || '').length 
+      stderr: fullStderr,
+      stderrLength: fullStderr.length,
+      url,
+      normalizedUrl,
     });
     logger.error('Full yt-dlp stdout (instagram)', { 
-      stdout: last?.stdout || '',
-      stdoutLength: (last?.stdout || '').length 
+      stdout: fullStdout,
+      stdoutLength: fullStdout.length,
+      url,
+      normalizedUrl,
     });
+    
+    // Если stderr пустой, это может означать проблему с запуском yt-dlp
+    if (!fullStderr && !fullStdout && last?.code !== 0) {
+      logger.error('yt-dlp returned error code but no output - possible installation issue', {
+        code: last.code,
+        url,
+        normalizedUrl,
+      });
+    }
     
     // Analyze stderr more carefully before mapping error
     const stderrText = (last?.stderr || '').toLowerCase();
