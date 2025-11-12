@@ -26,8 +26,9 @@ function mapYtDlpError(stderr: string): string {
   // More specific error patterns to avoid false positives
   // Check for actual error messages, not just keywords that might appear in progress output
   // Look for error: prefix or specific error patterns
-  const hasErrorPrefix = s.includes('error:') || s.includes('err:');
+  const hasErrorPrefix = s.includes('error:') || s.includes('err:') || s.includes('fatal:');
   
+  // Проверка на приватные видео и требование авторизации
   if (
     (hasErrorPrefix && (s.includes('private video') || s.includes('video is private'))) ||
     s.includes('login required') ||
@@ -38,25 +39,65 @@ function mapYtDlpError(stderr: string): string {
     s.includes('private account') ||
     s.includes('private user') ||
     s.includes('private post') ||
-    (hasErrorPrefix && s.includes('private') && (s.includes('account') || s.includes('user') || s.includes('post')))
+    s.includes('this account is private') ||
+    s.includes('user is private') ||
+    (hasErrorPrefix && s.includes('private') && (s.includes('account') || s.includes('user') || s.includes('post'))) ||
+    s.includes('authentication required') ||
+    s.includes('please log in')
   ) {
     return ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED;
   }
-  if (s.includes('http error 4') || s.includes('429') || s.includes('rate limit') || s.includes('too many requests')) {
+  
+  // Проверка на rate limit и HTTP ошибки
+  if (
+    s.includes('http error 4') || 
+    s.includes('429') || 
+    s.includes('rate limit') || 
+    s.includes('too many requests') ||
+    s.includes('http 429') ||
+    s.includes('http error 429')
+  ) {
     return ERROR_CODES.ERR_FETCH_FAILED;
   }
+  
+  // Проверка на неподдерживаемый URL или отсутствие видео
   if (
     s.includes('unsupported url') ||
     s.includes('no video found') ||
     s.includes('cannot parse') ||
     s.includes('unable to extract') ||
-    s.includes('video unavailable')
+    s.includes('video unavailable') ||
+    s.includes('unable to download') ||
+    s.includes('no video formats found') ||
+    (hasErrorPrefix && s.includes('unable to extract video data')) ||
+    (hasErrorPrefix && s.includes('unable to download video'))
   ) {
     return ERROR_CODES.ERR_UNSUPPORTED_URL;
   }
-  if (s.includes('geo-blocked') || s.includes('not available in your country') || (s.includes('blocked') && s.includes('region'))) {
+  
+  // Проверка на геоблокировку
+  if (
+    s.includes('geo-blocked') || 
+    s.includes('not available in your country') || 
+    (s.includes('blocked') && s.includes('region')) ||
+    s.includes('georestricted')
+  ) {
     return ERROR_CODES.ERR_GEO_BLOCKED;
   }
+  
+  // Если есть явная ошибка, но она не распознана - логируем для анализа
+  if (hasErrorPrefix) {
+    logger.warn('Unrecognized yt-dlp error pattern', { 
+      stderrPreview: stderr.slice(0, 500),
+      errorKeywords: [
+        s.includes('private') ? 'private' : null,
+        s.includes('login') ? 'login' : null,
+        s.includes('unable') ? 'unable' : null,
+        s.includes('error') ? 'error' : null,
+      ].filter(Boolean)
+    });
+  }
+  
   return ERROR_CODES.ERR_INTERNAL;
 }
 
