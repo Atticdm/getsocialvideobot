@@ -231,6 +231,11 @@ export async function setCachedFile(url: string, record: CachedFileRecord): Prom
   // Запись в PostgreSQL (dual-write)
   if (dbPool) {
     try {
+      // Округляем duration_seconds до целого числа, так как в БД это INTEGER
+      const durationSeconds = record.durationSeconds 
+        ? Math.round(record.durationSeconds) 
+        : null;
+      
       await dbPool.query(SET_CACHED_FILE_QUERY, [
         urlHash,
         normalizedUrl,
@@ -238,7 +243,7 @@ export async function setCachedFile(url: string, record: CachedFileRecord): Prom
         record.uniqueId || null,
         record.type,
         record.provider || null,
-        record.durationSeconds || null,
+        durationSeconds,
         record.sizeBytes || null,
         expiresAt,
       ]);
