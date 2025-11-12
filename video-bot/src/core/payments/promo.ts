@@ -89,9 +89,28 @@ export async function checkUnlimitedPromo(userId: number): Promise<boolean> {
   }
 
   try {
+    // Проверяем существование таблиц перед использованием
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_promo_status'
+      ) as exists
+    `);
+    
+    if (!tableCheck.rows[0]?.exists) {
+      // Таблицы не существуют - миграция не выполнена
+      return false;
+    }
+    
     const result = await pool.query(CHECK_USER_UNLIMITED_STATUS_QUERY, [userId]);
     return result.rows.length > 0;
   } catch (error: unknown) {
+    // Ошибка 42P01 означает, что таблица не существует
+    if (error && typeof error === 'object' && 'code' in error && error.code === '42P01') {
+      logger.warn({ userId }, 'Promo codes tables do not exist - migration required');
+      return false;
+    }
     logger.error({ error, userId }, 'Failed to check unlimited promo status');
     return false;
   }
@@ -113,6 +132,22 @@ export async function activatePromoCode(
   }
 
   try {
+    // Проверяем существование таблиц перед использованием
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'promo_codes'
+      ) as exists
+    `);
+    
+    if (!tableCheck.rows[0]?.exists) {
+      logger.error({ userId, code }, 'Promo codes tables do not exist - migration required');
+      return {
+        success: false,
+        message: '❌ Система промокодов еще не настроена. Обратитесь в поддержку (/support).',
+      };
+    }
     // Получаем промокод
     const promoResult = await pool.query(GET_PROMO_CODE_QUERY, [code.toUpperCase()]);
     
@@ -220,6 +255,19 @@ export async function checkPromoFeatureAccess(
   }
 
   try {
+    // Проверяем существование таблиц перед использованием
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'promo_code_usage'
+      ) as exists
+    `);
+    
+    if (!tableCheck.rows[0]?.exists) {
+      // Таблицы не существуют - миграция не выполнена
+      return { hasAccess: false };
+    }
     // Проверяем безлимитный доступ
     const hasUnlimited = await checkUnlimitedPromo(userId);
     if (hasUnlimited) {
@@ -245,6 +293,11 @@ export async function checkPromoFeatureAccess(
     }
     return { hasAccess: false };
   } catch (error: unknown) {
+    // Ошибка 42P01 означает, что таблица не существует
+    if (error && typeof error === 'object' && 'code' in error && error.code === '42P01') {
+      logger.warn({ userId, feature }, 'Promo codes tables do not exist - migration required');
+      return { hasAccess: false };
+    }
     logger.error({ error, userId, feature }, 'Failed to check promo feature access');
     return { hasAccess: false };
   }
