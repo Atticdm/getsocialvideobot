@@ -10,6 +10,10 @@
 const { Pool } = require('pg');
 const { readFileSync } = require('fs');
 const { join } = require('path');
+const { config } = require('dotenv');
+
+// Загружаем переменные окружения из .env файла
+config();
 
 async function runMigration(migrationFile) {
   const databaseUrl = process.env.DATABASE_URL;
