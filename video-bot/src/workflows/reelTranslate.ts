@@ -895,7 +895,7 @@ export async function translateInstagramReel(
       if (!voiceIdOverride) {
         throw new AppError(
           ERROR_CODES.ERR_INTERNAL,
-          `Указанный голос недоступен. Проверьте переменные ELEVENLABS_TERMINATOR_VOICE_RU/ELEVENLABS_TERMINATOR_VOICE_EN.`,
+          `Указанный голос недоступен. Проверьте переменные ELEVENLABS_TERMINATOR_VOICE_RU/ELEVENLABS_TERMINATOR_VOICE_EN/ELEVENLABS_ZHIRINOVSKY_VOICE_RU/ELEVENLABS_ZHIRINOVSKY_VOICE_EN.`,
           { preset: options.voicePreset }
         );
       }

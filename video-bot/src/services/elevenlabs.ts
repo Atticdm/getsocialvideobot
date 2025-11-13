@@ -41,6 +41,8 @@ export function getVoiceIdForPreset(preset: VoicePreset['id']): string | undefin
   const trimmed = (value: string | undefined) => (value && value.trim().length ? value.trim() : undefined);
   if (preset === 'terminator-ru') return trimmed(config.ELEVENLABS_TERMINATOR_VOICE_RU);
   if (preset === 'terminator-en') return trimmed(config.ELEVENLABS_TERMINATOR_VOICE_EN);
+  if (preset === 'zhirinovsky-ru') return trimmed(config.ELEVENLABS_ZHIRINOVSKY_VOICE_RU);
+  if (preset === 'zhirinovsky-en') return trimmed(config.ELEVENLABS_ZHIRINOVSKY_VOICE_EN);
   return undefined;
 }
 

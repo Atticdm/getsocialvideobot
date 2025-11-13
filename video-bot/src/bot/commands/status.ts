@@ -102,6 +102,8 @@ export async function statusCommand(ctx: Context): Promise<void> {
     
     const terminatorRu = config.ELEVENLABS_TERMINATOR_VOICE_RU ? '✅' : '⚠️';
     const terminatorEn = config.ELEVENLABS_TERMINATOR_VOICE_EN ? '✅' : '⚠️';
+    const zhirinovskyRu = config.ELEVENLABS_ZHIRINOVSKY_VOICE_RU ? '✅' : '⚠️';
+    const zhirinovskyEn = config.ELEVENLABS_ZHIRINOVSKY_VOICE_EN ? '✅' : '⚠️';
     
     const message = `🔧 **Bot Status**
 
@@ -112,7 +114,9 @@ export async function statusCommand(ctx: Context): Promise<void> {
 **Free disk space:** ${diskSpace}
 **Uptime:** ${uptime}
 **Terminator (RU voice):** ${terminatorRu}
-**Terminator (EN voice):** ${terminatorEn}`;
+**Terminator (EN voice):** ${terminatorEn}
+**Жириновский (RU voice):** ${zhirinovskyRu}
+**Жириновский (EN voice):** ${zhirinovskyEn}`;
     
     await ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {

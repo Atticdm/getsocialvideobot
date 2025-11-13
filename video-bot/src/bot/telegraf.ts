@@ -358,7 +358,7 @@ export async function setupBot(): Promise<void> {
     });
   };
 
-  const registerTranslateEngine = async (ctx: Context, choice: 'hume' | 'elevenlabs' | 'terminator') => {
+  const registerTranslateEngine = async (ctx: Context, choice: 'hume' | 'elevenlabs' | 'terminator' | 'zhirinovsky') => {
     const userId = ctx.from?.id;
     if (!userId) {
       await ctx.reply('Не удалось определить пользователя. Попробуйте ещё раз.');
@@ -413,6 +413,22 @@ export async function setupBot(): Promise<void> {
         voicePreset,
       });
       await ctx.reply('Терминатор готов! Пришлите ссылку на ролик.', {
+        reply_markup: linkPromptKeyboard.reply_markup,
+      });
+      return;
+    }
+
+    if (choice === 'zhirinovsky') {
+      const voicePreset: VoicePreset['id'] = direction === 'en-ru' ? 'zhirinovsky-ru' : 'zhirinovsky-en';
+      translationIntents.set(userId, {
+        flow: 'translate',
+        stage: 'ready',
+        direction,
+        mode: 'voice',
+        engine: 'elevenlabs',
+        voicePreset,
+      });
+      await ctx.reply('Жириновский готов! Пришлите ссылку на ролик.', {
         reply_markup: linkPromptKeyboard.reply_markup,
       });
       return;
@@ -481,7 +497,7 @@ export async function setupBot(): Promise<void> {
     const voiceId = getVoiceIdForPreset(preset);
     if (!voiceId) {
       await ctx.reply(
-        '❌ Голос сейчас недоступен. Проверьте переменные ELEVENLABS_TERМИNАТОР_VOICE_RU / ELEVENLABS_TERMINATOR_VOICE_EN.',
+        '❌ Голос сейчас недоступен. Проверьте переменные ELEVENLABS_TERMINATOR_VOICE_RU / ELEVENLABS_TERMINATOR_VOICE_EN / ELEVENLABS_ZHIRINOVSKY_VOICE_RU / ELEVENLABS_ZHIRINOVSKY_VOICE_EN.',
         {
           reply_markup: voiceChoiceKeyboard(intent.language).reply_markup,
         }
@@ -519,12 +535,15 @@ export async function setupBot(): Promise<void> {
   bot.hears('🚀 Быстрый (Hume)', (ctx) => registerTranslateEngine(ctx, 'hume'));
   bot.hears('💎 Качественный (ElevenLabs)', (ctx) => registerTranslateEngine(ctx, 'elevenlabs'));
   bot.hears('🎯 Голос Терминатора', (ctx) => registerTranslateEngine(ctx, 'terminator'));
+  bot.hears('🎤 Голос Жириновского', (ctx) => registerTranslateEngine(ctx, 'zhirinovsky'));
 
   bot.hears('🇷🇺 Ролик на русском', (ctx) => registerVoiceLanguage(ctx, 'ru'));
   bot.hears('🇬🇧 Video in English', (ctx) => registerVoiceLanguage(ctx, 'en'));
 
   bot.hears('🤖 Terminator (RU)', (ctx) => registerVoicePreset(ctx, 'terminator-ru'));
   bot.hears('🤖 Terminator (EN)', (ctx) => registerVoicePreset(ctx, 'terminator-en'));
+  bot.hears('🎤 Жириновский (RU)', (ctx) => registerVoicePreset(ctx, 'zhirinovsky-ru'));
+  bot.hears('🎤 Жириновский (EN)', (ctx) => registerVoicePreset(ctx, 'zhirinovsky-en'));
 
   const cancelFlow = async (ctx: Context) => {
     const userId = ctx.from?.id;

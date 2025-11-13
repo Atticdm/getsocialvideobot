@@ -65,6 +65,12 @@ function normalizeVoicePresetToken(token?: string, direction?: TranslationDirect
     if (direction === 'ru-en' || direction === 'identity-en') return 'terminator-en';
     return 'terminator-ru';
   }
+  if (normalized === 'zhirinovsky' || normalized === 'zhirinovsky-ru') return 'zhirinovsky-ru';
+  if (normalized === 'zhirinovsky-en') return 'zhirinovsky-en';
+  if (normalized === 'zhirinovsky-auto') {
+    if (direction === 'ru-en' || direction === 'identity-en') return 'zhirinovsky-en';
+    return 'zhirinovsky-ru';
+  }
   return undefined;
 }
 
@@ -93,6 +99,11 @@ function parseEngineAndVoice(
       direction === 'ru-en' || direction === 'identity-en' ? 'terminator-en' : ('terminator-ru' as VoicePreset['id']);
     return { engine: 'elevenlabs', voicePreset: preset };
   }
+  if (normalized === 'zhirinovsky') {
+    const preset =
+      direction === 'ru-en' || direction === 'identity-en' ? 'zhirinovsky-en' : ('zhirinovsky-ru' as VoicePreset['id']);
+    return { engine: 'elevenlabs', voicePreset: preset };
+  }
   return { engine: 'hume' };
 }
 
@@ -100,6 +111,8 @@ function describeVoice(preset?: VoicePreset['id']): string | undefined {
   if (!preset) return undefined;
   if (preset === 'terminator-ru') return 'Terminator (RU)';
   if (preset === 'terminator-en') return 'Terminator (EN)';
+  if (preset === 'zhirinovsky-ru') return 'Жириновский (RU)';
+  if (preset === 'zhirinovsky-en') return 'Жириновский (EN)';
   return preset;
 }
 
@@ -126,7 +139,7 @@ export async function translateCommand(ctx: Context): Promise<void> {
 
   if (!url) {
     await ctx.reply(
-      'Использование: /translate <ссылка на рилс> [en-ru|ru-en|identity-ru|identity-en|auto] [hume|elevenlabs|terminator-ru|terminator-en]'
+      'Использование: /translate <ссылка на рилс> [en-ru|ru-en|identity-ru|identity-en|auto] [hume|elevenlabs|terminator-ru|terminator-en|zhirinovsky-ru|zhirinovsky-en]'
     );
     return;
   }

@@ -64,6 +64,8 @@ const configSchema = z.object({
   ELEVENLABS_API_KEY: z.string().optional().default(''),
   ELEVENLABS_TERMINATOR_VOICE_RU: z.string().optional().default(''),
   ELEVENLABS_TERMINATOR_VOICE_EN: z.string().optional().default(''),
+  ELEVENLABS_ZHIRINOVSKY_VOICE_RU: z.string().optional().default(''),
+  ELEVENLABS_ZHIRINOVSKY_VOICE_EN: z.string().optional().default(''),
   ELEVENLABS_TTS_MODEL_ID: z.string().optional().default('eleven_multilingual_v2'),
   LALAL_API_KEY: z.string().optional().default(''),
 });

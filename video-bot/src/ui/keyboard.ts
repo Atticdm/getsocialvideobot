@@ -13,7 +13,7 @@ export const translateDirectionKeyboard = Markup.keyboard([
 
 export const translateEngineKeyboard = Markup.keyboard([
   ['🚀 Быстрый (Hume)', '💎 Качественный (ElevenLabs)'],
-  ['🎯 Голос Терминатора'],
+  ['🎯 Голос Терминатора', '🎤 Голос Жириновского'],
   ['⬅️ Назад']
 ]).resize();
 
@@ -25,9 +25,9 @@ export const voiceLanguageKeyboard = Markup.keyboard([
 export function voiceChoiceKeyboard(language: 'ru' | 'en') {
   const rows: string[][] = [];
   if (language === 'ru') {
-    rows.push(['🤖 Terminator (RU)']);
+    rows.push(['🤖 Terminator (RU)', '🎤 Жириновский (RU)']);
   } else {
-    rows.push(['🤖 Terminator (EN)']);
+    rows.push(['🤖 Terminator (EN)', '🎤 Жириновский (EN)']);
   }
   rows.push(['⬅️ Назад']);
   return Markup.keyboard(rows).resize();
