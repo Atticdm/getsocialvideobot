@@ -766,20 +766,54 @@ async function runElevenLabsTtsPipeline(
 
       const actualDuration = await getAudioDuration(partPath);
       const targetDuration = durationSeconds;
-      if (actualDuration > 0 && targetDuration > 0 && actualDuration > targetDuration * 1.03) {
-        let speed = actualDuration / targetDuration;
-        if (speed > 1.3) speed = 1.3;
-        const tempPath = `${partPath}.tempo.mp3`;
-        await run(ffmpegCmd, [
-          '-y',
-          '-i',
-          partPath,
-          '-filter:a',
-          `atempo=${speed.toFixed(3)}`,
-          tempPath,
-        ]);
-        await fs.promises.rename(tempPath, partPath);
-        logger.debug({ speed, segmentIndex: i, actualDuration, targetDuration }, 'Adjusted TTS segment tempo');
+      
+      // Улучшенная корректировка скорости: корректируем в обе стороны
+      if (actualDuration > 0 && targetDuration > 0) {
+        const durationDiff = Math.abs(actualDuration - targetDuration);
+        const tolerance = targetDuration * 0.03; // 3% допуск
+        
+        if (durationDiff > tolerance) {
+          let speed = actualDuration / targetDuration;
+          // Ограничиваем скорость изменения: от 0.7x до 1.3x
+          if (speed > 1.3) speed = 1.3;
+          if (speed < 0.7) speed = 0.7;
+          
+          const tempPath = `${partPath}.tempo.mp3`;
+          await run(ffmpegCmd, [
+            '-y',
+            '-i',
+            partPath,
+            '-filter:a',
+            `atempo=${speed.toFixed(3)}`,
+            tempPath,
+          ]);
+          await fs.promises.rename(tempPath, partPath);
+          logger.debug({ 
+            speed, 
+            segmentIndex: i, 
+            actualDuration, 
+            targetDuration,
+            adjusted: actualDuration !== targetDuration 
+          }, 'Adjusted TTS segment tempo for synchronization');
+        }
+      }
+
+      // Добавляем паузу перед следующим сегментом на основе временных меток
+      if (i < mergedSegments.length - 1) {
+        const nextSegment = mergedSegments[i + 1];
+        if (nextSegment && isSpeechSegment(nextSegment)) {
+          const currentEnd = segment.end;
+          const nextStart = nextSegment.start;
+          const gap = nextStart - currentEnd;
+          
+          // Если есть пауза между сегментами (более 0.05 секунд), добавляем её
+          if (gap > 0.05) {
+            const pausePath = path.join(sessionDir, `tts_pause_${i}.mp3`);
+            await queueSilence(gap, pausePath);
+            audioParts.push(pausePath);
+            logger.debug({ gap, segmentIndex: i, nextSegmentIndex: i + 1, currentEnd, nextStart }, 'Added pause between segments for synchronization');
+          }
+        }
       }
 
       continue;
