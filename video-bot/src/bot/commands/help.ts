@@ -16,7 +16,7 @@ export async function helpCommand(ctx: Context): Promise<void> {
 /start — приветствие и клавиатура
 /help — эта подсказка
 /status — служебная информация (версия, yt-dlp, ffmpeg, свободное место)
-/download <url> — скачать оригинал (Facebook, Instagram, YouTube, TikTok, LinkedIn, Sora)
+/download <url> — скачать оригинал (Facebook, Instagram, YouTube, TikTok, LinkedIn, Sora, ВКонтакте)
 /dl <url> или /get <url> — короткие алиасы (удобно в группах)
 /translate <url> [en-ru|ru-en|identity-ru|identity-en|auto] [elevenlabs|terminator-ru|terminator-en|zhirinovsky-ru|zhirinovsky-en] — перевод или переозвучка рилса (при ENABLE_REEL_TRANSLATION)
 /credits — показать баланс кредитов

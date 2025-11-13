@@ -9,7 +9,10 @@ export function isVkUrl(url: string): boolean {
       h === 'vk.ru' ||
       h === 'www.vk.ru' ||
       h === 'm.vk.ru' ||
-      (h.includes('vk.com') && (u.pathname.includes('/video') || u.pathname.includes('/clip')))
+      h === 'vkvideo.ru' ||
+      h === 'www.vkvideo.ru' ||
+      (h.includes('vk.com') && (u.pathname.includes('/video') || u.pathname.includes('/clip'))) ||
+      (h.includes('vkvideo.ru') && (u.pathname.includes('/clip') || u.pathname.includes('/video')))
     );
   } catch {
     return false;

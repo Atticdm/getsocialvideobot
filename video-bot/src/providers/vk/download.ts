@@ -13,7 +13,12 @@ function normalizeUrl(u: string): string {
   try {
     const url = new URL(u);
     // Keep only the essential path, remove tracking params
-    if (url.hostname.includes('vk.com') || url.hostname.includes('vk.ru')) {
+    if (url.hostname.includes('vk.com') || url.hostname.includes('vk.ru') || url.hostname.includes('vkvideo.ru')) {
+      // Normalize vkvideo.ru to vk.com format if possible, otherwise keep as is
+      if (url.hostname.includes('vkvideo.ru')) {
+        // vkvideo.ru/clip-xxx_xxx format - keep as is, yt-dlp handles it
+        return url.origin + url.pathname;
+      }
       // Normalize to vk.com
       const normalizedHost = url.hostname.replace('vk.ru', 'vk.com').replace('m.vk.com', 'vk.com');
       return `https://${normalizedHost}${url.pathname}`;
