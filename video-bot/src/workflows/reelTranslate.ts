@@ -15,7 +15,7 @@ import {
 import { run } from '../core/exec';
 import { transcribeWithWhisper } from '../services/whisper';
 import { translateText } from '../services/translator';
-import { synthesizeSpeech } from '../services/tts';
+// import { synthesizeSpeech } from '../services/tts'; // Используется только в закомментированной функции runHumePipeline
 import { paths } from '../core/paths';
 import { separateAudioWithLalal } from '../services/lalal';
 import {
@@ -99,13 +99,14 @@ function resolveLanguages(
   return { source: 'unknown', target: 'ru' };
 }
 
-function selectVoiceId(target: WhisperLanguage, gender: 'male' | 'female' | 'unknown'): string {
-  const isRussian = target === 'ru';
-  if (isRussian) {
-    return gender === 'male' ? config.HUME_VOICE_ID_RU_MALE : config.HUME_VOICE_ID_RU_FEMALE;
-  }
-  return gender === 'male' ? config.HUME_VOICE_ID_EN_MALE : config.HUME_VOICE_ID_EN_FEMALE;
-}
+// Используется только в закомментированной функции runHumePipeline
+// function selectVoiceId(target: WhisperLanguage, gender: 'male' | 'female' | 'unknown'): string {
+//   const isRussian = target === 'ru';
+//   if (isRussian) {
+//     return gender === 'male' ? config.HUME_VOICE_ID_RU_MALE : config.HUME_VOICE_ID_RU_FEMALE;
+//   }
+//   return gender === 'male' ? config.HUME_VOICE_ID_EN_MALE : config.HUME_VOICE_ID_EN_FEMALE;
+// }
 
 function normalizeSegmentType(segment?: TimelineSegment): string {
   return (segment?.type ?? 'speech').toLowerCase();
@@ -116,25 +117,27 @@ function isSpeechSegment(segment?: TimelineSegment): boolean {
   return type === 'speech' || type === 'voice';
 }
 
-function isPauseSegment(segment?: TimelineSegment): boolean {
-  const type = normalizeSegmentType(segment);
-  return type === 'pause' || type === 'silence';
-}
+// Используется только в закомментированной функции runHumePipeline
+// function isPauseSegment(segment?: TimelineSegment): boolean {
+//   const type = normalizeSegmentType(segment);
+//   return type === 'pause' || type === 'silence';
+// }
 
 function segmentDuration(segment: TimelineSegment): number {
   return Math.max(0, (segment.end ?? 0) - (segment.start ?? 0));
 }
 
-function pickDominantEmotion(segment: TimelineSegment): { name: string; score?: number } | undefined {
-  if (!segment.emotions || segment.emotions.length === 0) return undefined;
-  return segment.emotions.reduce<{ name: string; score?: number }>((best, current) => {
-    const currentScore =
-      typeof current.score === 'number' && Number.isFinite(current.score) ? current.score : Number.NEGATIVE_INFINITY;
-    const bestScore =
-      typeof best.score === 'number' && Number.isFinite(best.score) ? best.score : Number.NEGATIVE_INFINITY;
-    return currentScore > bestScore ? current : best;
-  }, segment.emotions[0]!);
-}
+// Используется только в закомментированной функции runHumePipeline
+// function pickDominantEmotion(segment: TimelineSegment): { name: string; score?: number } | undefined {
+//   if (!segment.emotions || segment.emotions.length === 0) return undefined;
+//   return segment.emotions.reduce<{ name: string; score?: number }>((best, current) => {
+//     const currentScore =
+//       typeof current.score === 'number' && Number.isFinite(current.score) ? current.score : Number.NEGATIVE_INFINITY;
+//     const bestScore =
+//       typeof best.score === 'number' && Number.isFinite(best.score) ? best.score : Number.NEGATIVE_INFINITY;
+//     return currentScore > bestScore ? current : best;
+//   }, segment.emotions[0]!);
+// }
 
 interface PipelineResult {
   audioPath: string;
@@ -648,6 +651,7 @@ async function runHumePipeline(
     transcriptPath: '',
   };
 }
+*/
 
 async function runElevenLabsTtsPipeline(
   downloadPath: string,
