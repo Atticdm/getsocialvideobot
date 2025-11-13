@@ -358,7 +358,7 @@ export async function setupBot(): Promise<void> {
     });
   };
 
-  const registerTranslateEngine = async (ctx: Context, choice: 'hume' | 'elevenlabs' | 'terminator' | 'zhirinovsky') => {
+  const registerTranslateEngine = async (ctx: Context, choice: /* 'hume' | */ 'elevenlabs' | 'terminator' | 'zhirinovsky') => {
     const userId = ctx.from?.id;
     if (!userId) {
       await ctx.reply('Не удалось определить пользователя. Попробуйте ещё раз.');
@@ -374,19 +374,20 @@ export async function setupBot(): Promise<void> {
     }
 
     const direction = intent.direction;
-    if (choice === 'hume') {
-      translationIntents.set(userId, {
-        flow: 'translate',
-        stage: 'ready',
-        direction,
-        mode: 'translate',
-        engine: 'hume',
-      });
-      await ctx.reply('Отличный выбор! Пришлите ссылку на ролик.', {
-        reply_markup: linkPromptKeyboard.reply_markup,
-      });
-      return;
-    }
+    // Hume функционал временно отключен
+    // if (choice === 'hume') {
+    //   translationIntents.set(userId, {
+    //     flow: 'translate',
+    //     stage: 'ready',
+    //     direction,
+    //     mode: 'translate',
+    //     engine: 'hume',
+    //   });
+    //   await ctx.reply('Отличный выбор! Пришлите ссылку на ролик.', {
+    //     reply_markup: linkPromptKeyboard.reply_markup,
+    //   });
+    //   return;
+    // }
 
     if (choice === 'elevenlabs') {
       translationIntents.set(userId, {
@@ -523,7 +524,7 @@ export async function setupBot(): Promise<void> {
   };
 
   bot.hears('🌐 Перевести видео', startTranslateFlow);
-  bot.hears('🎙 Озвучить видео', startVoiceFlow);
+  bot.hears('🎙 Переозвучить видео', startVoiceFlow);
   // Arena publishing functionality is temporarily disabled
   // bot.hears('📣 Опубликовать в канал', startArenaPublishFlow);
   bot.hears('⬇️ Скачать видео', showDownloadInfo);
@@ -532,7 +533,7 @@ export async function setupBot(): Promise<void> {
   bot.hears('🇬🇧 → 🇷🇺', (ctx) => registerTranslationDirection(ctx, 'en-ru'));
   bot.hears('🇷🇺 → 🇬🇧', (ctx) => registerTranslationDirection(ctx, 'ru-en'));
 
-  bot.hears('🚀 Быстрый (Hume)', (ctx) => registerTranslateEngine(ctx, 'hume'));
+  // bot.hears('🚀 Быстрый (Hume)', (ctx) => registerTranslateEngine(ctx, 'hume')); // Hume функционал временно отключен
   bot.hears('💎 Качественный (ElevenLabs)', (ctx) => registerTranslateEngine(ctx, 'elevenlabs'));
   bot.hears('🎯 Голос Терминатора', (ctx) => registerTranslateEngine(ctx, 'terminator'));
   bot.hears('🎤 Голос Жириновского', (ctx) => registerTranslateEngine(ctx, 'zhirinovsky'));

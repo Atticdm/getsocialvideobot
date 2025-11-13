@@ -2,8 +2,8 @@ import { Markup } from 'telegraf';
 
 export const mainKeyboard = Markup.keyboard([
   ['⬇️ Скачать видео', '🌐 Перевести видео'],
-  ['🎙 Озвучить видео'], // Arena publishing functionality is temporarily disabled
-  // ['🎙 Озвучить видео', '📣 Опубликовать в канал'],
+  ['🎙 Переозвучить видео'], // Arena publishing functionality is temporarily disabled
+  // ['🎙 Переозвучить видео', '📣 Опубликовать в канал'],
 ]).resize();
 
 export const translateDirectionKeyboard = Markup.keyboard([
@@ -12,7 +12,8 @@ export const translateDirectionKeyboard = Markup.keyboard([
 ]).resize();
 
 export const translateEngineKeyboard = Markup.keyboard([
-  ['🚀 Быстрый (Hume)', '💎 Качественный (ElevenLabs)'],
+  // ['🚀 Быстрый (Hume)', '💎 Качественный (ElevenLabs)'], // Hume функционал временно отключен
+  ['💎 Качественный (ElevenLabs)'],
   ['🎯 Голос Терминатора', '🎤 Голос Жириновского'],
   ['⬅️ Назад']
 ]).resize();

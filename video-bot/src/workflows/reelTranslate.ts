@@ -457,6 +457,8 @@ async function prepareSpeechData(
   };
 }
 
+// Hume функционал временно отключен
+/*
 async function runHumePipeline(
   downloadPath: string,
   originalAudioPath: string,
@@ -973,16 +975,18 @@ export async function translateInstagramReel(
       );
     }
   } else {
-    pipelineResult = await runHumePipeline(
-      downloadPath,
-      originalAudioPath,
-      sessionDir,
-      options,
-      stages,
-      observer,
-      vocalPath,
-      instrumentalPath
-    );
+    // Hume функционал временно отключен
+    // pipelineResult = await runHumePipeline(
+    //   downloadPath,
+    //   originalAudioPath,
+    //   sessionDir,
+    //   options,
+    //   stages,
+    //   observer,
+    //   vocalPath,
+    //   instrumentalPath
+    // );
+    throw new AppError(ERROR_CODES.ERR_INTERNAL, 'Hume функционал временно отключен. Используйте ElevenLabs или голосовые пресеты.');
   }
 
   const muxStage = beginStage('mux', stages);

@@ -84,16 +84,17 @@ function parseEngineAndVoice(
   }
 
   if (!token) {
-    return { engine: 'hume' };
+    // return { engine: 'hume' }; // Hume функционал временно отключен
+    return { engine: 'elevenlabs' };
   }
 
   const normalized = token.trim().toLowerCase();
   if (normalized.startsWith('eleven') || normalized.includes('elevenlabs')) {
     return { engine: 'elevenlabs' };
   }
-  if (normalized === 'hume' || normalized === 'fast') {
-    return { engine: 'hume' };
-  }
+  // if (normalized === 'hume' || normalized === 'fast') {
+  //   return { engine: 'hume' }; // Hume функционал временно отключен
+  // }
   if (normalized === 'terminator') {
     const preset =
       direction === 'ru-en' || direction === 'identity-en' ? 'terminator-en' : ('terminator-ru' as VoicePreset['id']);
@@ -104,7 +105,8 @@ function parseEngineAndVoice(
       direction === 'ru-en' || direction === 'identity-en' ? 'zhirinovsky-en' : ('zhirinovsky-ru' as VoicePreset['id']);
     return { engine: 'elevenlabs', voicePreset: preset };
   }
-  return { engine: 'hume' };
+  // return { engine: 'hume' }; // Hume функционал временно отключен
+  return { engine: 'elevenlabs' };
 }
 
 function describeVoice(preset?: VoicePreset['id']): string | undefined {
@@ -139,7 +141,7 @@ export async function translateCommand(ctx: Context): Promise<void> {
 
   if (!url) {
     await ctx.reply(
-      'Использование: /translate <ссылка на рилс> [en-ru|ru-en|identity-ru|identity-en|auto] [hume|elevenlabs|terminator-ru|terminator-en|zhirinovsky-ru|zhirinovsky-en]'
+      'Использование: /translate <ссылка на рилс> [en-ru|ru-en|identity-ru|identity-en|auto] [elevenlabs|terminator-ru|terminator-en|zhirinovsky-ru|zhirinovsky-en]'
     );
     return;
   }
