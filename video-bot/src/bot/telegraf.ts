@@ -827,6 +827,62 @@ export async function setupBot(): Promise<void> {
     }
   });
 
+  // Обработчики лицензионного соглашения
+  bot.action('accept_agreement', async (ctx) => {
+    try {
+      const userId = ctx.from?.id;
+      if (!userId) {
+        await ctx.answerCbQuery('Не удалось определить пользователя.', { show_alert: true });
+        return;
+      }
+
+      const { acceptAgreement } = await import('../core/agreement');
+      const accepted = await acceptAgreement(userId);
+      if (accepted) {
+        await ctx.answerCbQuery('✅ Соглашение принято!');
+        await ctx.editMessageText('✅ Вы приняли лицензионное соглашение. Теперь вы можете использовать бота.');
+        
+        // Показываем приветственное сообщение
+        const message = `🎥 Welcome!
+
+- Просто пришли ссылку на поддерживаемое видео, чтобы получить оригинал.
+- Для перевода рилсов нажми «🌐 Перевести видео».
+// Arena publishing functionality is temporarily disabled
+// - Чтобы сразу опубликовать ролик в Reels Arena, выбери «📣 Опубликовать в канал» или команду /publish.
+
+Команда /status покажет служебную информацию (если нужна).
+Список команд: /help.`;
+
+        await ctx.reply(message, { reply_markup: mainKeyboard.reply_markup });
+        
+        trackUserEvent('agreement.accepted', userId, { username: ctx.from?.username });
+      } else {
+        await ctx.answerCbQuery('❌ Ошибка при сохранении согласия. Попробуйте позже.', { show_alert: true });
+      }
+    } catch (error: unknown) {
+      logger.error({ error }, 'Error handling accept_agreement callback');
+      await ctx.answerCbQuery('❌ Произошла ошибка. Попробуйте позже.', { show_alert: true });
+    }
+  });
+
+  bot.action('reject_agreement', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('Для использования бота необходимо принять условия соглашения.');
+      await ctx.editMessageText(
+        '❌ Для использования бота необходимо принять лицензионное соглашение.\n\n' +
+        'Если у вас есть вопросы, обратитесь в поддержку: /support\n\n' +
+        'Для повторного просмотра соглашения используйте команду /start'
+      );
+      
+      const userId = ctx.from?.id;
+      if (userId) {
+        trackUserEvent('agreement.rejected', userId, { username: ctx.from?.username });
+      }
+    } catch (error: unknown) {
+      logger.error({ error }, 'Error handling reject_agreement callback');
+    }
+  });
+
   bot.catch((err, ctx) => {
     logger.error(
       {
