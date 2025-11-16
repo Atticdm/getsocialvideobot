@@ -517,11 +517,33 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       // } else {
       //   await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size);
       // }
-      await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size);
+      
+      // Сохранение в кеш - не критично, если файл уже отправлен
+      try {
+        await persistCache(sentMessage as Message.DocumentMessage | Message.VideoMessage, result.videoInfo?.duration, result.videoInfo?.size);
+      } catch (cacheError) {
+        logger.warn('Failed to persist cache after successful download', { 
+          error: cacheError, 
+          userId, 
+          url,
+          filePath: result.filePath 
+        });
+        // Не пробрасываем ошибку - файл уже успешно отправлен
+      }
 
     } finally {
-      // Clean up session directory
-      await safeRemove(sessionDir);
+      // Clean up session directory - ошибки при очистке не критичны
+      try {
+        await safeRemove(sessionDir);
+      } catch (cleanupError) {
+        logger.warn('Failed to cleanup session directory', { 
+          error: cleanupError, 
+          userId, 
+          url,
+          sessionDir 
+        });
+        // Не пробрасываем ошибку - файл уже успешно отправлен
+      }
     }
 
   } catch (error) {
