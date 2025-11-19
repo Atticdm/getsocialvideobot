@@ -21,81 +21,157 @@ function normalizeReelUrl(u: string): string {
   return code ? `https://www.instagram.com/reel/${code}/` : u;
 }
 
-function mapYtDlpError(stderr: string): string {
+function mapYtDlpError(stderr: string, exitCode?: number, url?: string): string {
   const s = stderr.toLowerCase();
+  const fullStderr = stderr; // Сохраняем оригинальный stderr для логирования
+  
   // More specific error patterns to avoid false positives
   // Check for actual error messages, not just keywords that might appear in progress output
   // Look for error: prefix or specific error patterns
   const hasErrorPrefix = s.includes('error:') || s.includes('err:') || s.includes('fatal:');
   
+  // Детальное логирование для диагностики
+  logger.debug('mapYtDlpError: Analyzing error', {
+    url,
+    exitCode,
+    stderrLength: stderr.length,
+    hasErrorPrefix,
+    stderrPreview: stderr.slice(0, 1000),
+    firstLine: stderr.split('\n')[0]?.slice(0, 200),
+    lastLine: stderr.split('\n').filter(Boolean).pop()?.slice(0, 200),
+  });
+  
   // Проверка на приватные видео и требование авторизации
-  if (
-    (hasErrorPrefix && (s.includes('private video') || s.includes('video is private'))) ||
-    s.includes('login required') ||
-    s.includes('sign in to') ||
-    s.includes('only available to') ||
-    s.includes('this video is not available') ||
-    s.includes('content is not available') ||
-    s.includes('private account') ||
-    s.includes('private user') ||
-    s.includes('private post') ||
-    s.includes('this account is private') ||
-    s.includes('user is private') ||
-    (hasErrorPrefix && s.includes('private') && (s.includes('account') || s.includes('user') || s.includes('post'))) ||
-    s.includes('authentication required') ||
-    s.includes('please log in')
-  ) {
+  const privatePatterns = [
+    (hasErrorPrefix && (s.includes('private video') || s.includes('video is private'))),
+    s.includes('login required'),
+    s.includes('sign in to'),
+    s.includes('only available to'),
+    s.includes('this video is not available'),
+    s.includes('content is not available'),
+    s.includes('private account'),
+    s.includes('private user'),
+    s.includes('private post'),
+    s.includes('this account is private'),
+    s.includes('user is private'),
+    (hasErrorPrefix && s.includes('private') && (s.includes('account') || s.includes('user') || s.includes('post'))),
+    s.includes('authentication required'),
+    s.includes('please log in'),
+  ];
+  
+  if (privatePatterns.some(Boolean)) {
+    logger.info('mapYtDlpError: Detected ERR_PRIVATE_OR_RESTRICTED', {
+      url,
+      exitCode,
+      matchedPatterns: privatePatterns.map((p, i) => p ? i : null).filter((v): v is number => v !== null),
+      stderrPreview: stderr.slice(0, 500),
+    });
     return ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED;
   }
   
   // Проверка на rate limit и HTTP ошибки
-  if (
-    s.includes('http error 4') || 
-    s.includes('429') || 
-    s.includes('rate limit') || 
-    s.includes('too many requests') ||
-    s.includes('http 429') ||
-    s.includes('http error 429')
-  ) {
+  const rateLimitPatterns = [
+    s.includes('http error 4'),
+    s.includes('429'),
+    s.includes('rate limit'),
+    s.includes('too many requests'),
+    s.includes('http 429'),
+    s.includes('http error 429'),
+  ];
+  
+  if (rateLimitPatterns.some(Boolean)) {
+    logger.info('mapYtDlpError: Detected ERR_FETCH_FAILED (rate limit)', {
+      url,
+      exitCode,
+      matchedPatterns: rateLimitPatterns.map((p, i) => p ? i : null).filter((v): v is number => v !== null),
+      stderrPreview: stderr.slice(0, 500),
+    });
     return ERROR_CODES.ERR_FETCH_FAILED;
   }
   
   // Проверка на неподдерживаемый URL или отсутствие видео
-  if (
-    s.includes('unsupported url') ||
-    s.includes('no video found') ||
-    s.includes('cannot parse') ||
-    s.includes('unable to extract') ||
-    s.includes('video unavailable') ||
-    s.includes('unable to download') ||
-    s.includes('no video formats found') ||
-    (hasErrorPrefix && s.includes('unable to extract video data')) ||
-    (hasErrorPrefix && s.includes('unable to download video'))
-  ) {
+  const unsupportedPatterns = [
+    s.includes('unsupported url'),
+    s.includes('no video found'),
+    s.includes('cannot parse'),
+    s.includes('unable to extract'),
+    s.includes('video unavailable'),
+    s.includes('unable to download'),
+    s.includes('no video formats found'),
+    (hasErrorPrefix && s.includes('unable to extract video data')),
+    (hasErrorPrefix && s.includes('unable to download video')),
+  ];
+  
+  if (unsupportedPatterns.some(Boolean)) {
+    logger.info('mapYtDlpError: Detected ERR_UNSUPPORTED_URL', {
+      url,
+      exitCode,
+      matchedPatterns: unsupportedPatterns.map((p, i) => p ? i : null).filter((v): v is number => v !== null),
+      stderrPreview: stderr.slice(0, 500),
+    });
     return ERROR_CODES.ERR_UNSUPPORTED_URL;
   }
   
   // Проверка на геоблокировку
-  if (
-    s.includes('geo-blocked') || 
-    s.includes('not available in your country') || 
-    (s.includes('blocked') && s.includes('region')) ||
-    s.includes('georestricted')
-  ) {
+  const geoBlockedPatterns = [
+    s.includes('geo-blocked'),
+    s.includes('not available in your country'),
+    (s.includes('blocked') && s.includes('region')),
+    s.includes('georestricted'),
+  ];
+  
+  if (geoBlockedPatterns.some(Boolean)) {
+    logger.info('mapYtDlpError: Detected ERR_GEO_BLOCKED', {
+      url,
+      exitCode,
+      matchedPatterns: geoBlockedPatterns.map((p, i) => p ? i : null).filter((v): v is number => v !== null),
+      stderrPreview: stderr.slice(0, 500),
+    });
     return ERROR_CODES.ERR_GEO_BLOCKED;
   }
   
   // Если есть явная ошибка, но она не распознана - логируем для анализа
   if (hasErrorPrefix) {
-    logger.warn('Unrecognized yt-dlp error pattern', { 
-      stderrPreview: stderr.slice(0, 500),
+    // Извлекаем все строки с ошибками для детального анализа
+    const errorLines = stderr.split('\n').filter(line => {
+      const lower = line.toLowerCase();
+      return lower.includes('error:') || lower.includes('err:') || lower.includes('fatal:');
+    });
+    
+    logger.error('mapYtDlpError: Unrecognized yt-dlp error pattern', { 
+      url,
+      exitCode,
+      stderrLength: stderr.length,
+      stderrFull: fullStderr, // Полный stderr для анализа
+      errorLines, // Только строки с ошибками
       errorKeywords: [
         s.includes('private') ? 'private' : null,
         s.includes('login') ? 'login' : null,
         s.includes('unable') ? 'unable' : null,
         s.includes('error') ? 'error' : null,
-      ].filter(Boolean)
+        s.includes('http') ? 'http' : null,
+        s.includes('blocked') ? 'blocked' : null,
+        s.includes('unavailable') ? 'unavailable' : null,
+        s.includes('not found') ? 'not found' : null,
+        s.includes('failed') ? 'failed' : null,
+        s.includes('timeout') ? 'timeout' : null,
+      ].filter(Boolean),
+      // Дополнительные паттерны для анализа
+      containsNumbers: /\d+/.test(stderr),
+      containsUrls: /https?:\/\//.test(stderr),
+      containsJson: stderr.includes('{') && stderr.includes('}'),
     });
+  } else {
+    // Даже если нет явного префикса ошибки, но exit code != 0, логируем
+    if (exitCode !== undefined && exitCode !== 0) {
+      logger.warn('mapYtDlpError: Non-zero exit code but no error prefix found', {
+        url,
+        exitCode,
+        stderrLength: stderr.length,
+        stderrFull: fullStderr,
+        stdoutLength: 0, // stdout будет передан отдельно если нужно
+      });
+    }
   }
   
   return ERROR_CODES.ERR_INTERNAL;
@@ -239,10 +315,21 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
           attempt: i + 1,
           target: a.target,
           code: result.code,
+          durationMs: result.durationMs,
           stderrLength: result.stderr.length,
           stdoutLength: result.stdout.length,
           stderrPreview: result.stderr.slice(0, 500),
           stdoutPreview: result.stdout.slice(0, 200),
+          // Дополнительная диагностика
+          stderrFull: result.stderr, // Полный stderr для анализа
+          stdoutFull: result.stdout, // Полный stdout для анализа
+          hasErrorPrefix: result.stderr.toLowerCase().includes('error:') || 
+                         result.stderr.toLowerCase().includes('err:') || 
+                         result.stderr.toLowerCase().includes('fatal:'),
+          errorLines: result.stderr.split('\n').filter(line => {
+            const lower = line.toLowerCase();
+            return lower.includes('error:') || lower.includes('err:') || lower.includes('fatal:');
+          }),
         });
       }
 
@@ -353,7 +440,28 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
       });
     }
     
-    throw new AppError(mapYtDlpError(last?.stderr || ''), 'yt-dlp download failed', { url, stderr: last?.stderr, stdout: last?.stdout, code: last?.code });
+    // Детальное логирование перед маппингом ошибки
+    logger.error('About to map yt-dlp error', {
+      url,
+      normalizedUrl,
+      exitCode: last?.code,
+      stderrLength: last?.stderr?.length || 0,
+      stdoutLength: last?.stdout?.length || 0,
+      stderrPreview: (last?.stderr || '').slice(0, 1000),
+      stdoutPreview: (last?.stdout || '').slice(0, 500),
+    });
+    
+    const errorCode = mapYtDlpError(last?.stderr || '', last?.code, url);
+    
+    logger.error('Error code mapped', {
+      url,
+      normalizedUrl,
+      errorCode,
+      exitCode: last?.code,
+      stderrLength: last?.stderr?.length || 0,
+    });
+    
+    throw new AppError(errorCode, 'yt-dlp download failed', { url, stderr: last?.stderr, stdout: last?.stdout, code: last?.code });
   } catch (error) {
     if (error instanceof AppError) throw error;
     logger.error('Unexpected error during Instagram download', { error, url, outDir });
@@ -388,7 +496,14 @@ export async function fetchInstagramMetadata(url: string): Promise<VideoMetadata
           logger.warn('Failed to parse Instagram metadata JSON', { url: attempt.target, error: lastError.message });
         }
       } else {
-        lastError = new AppError(mapYtDlpError(result.stderr), 'Metadata attempt failed', { url: attempt.target, stderr: result.stderr, code: result.code });
+        logger.warn('Instagram metadata attempt failed, mapping error', {
+          url: attempt.target,
+          exitCode: result.code,
+          stderrLength: result.stderr.length,
+          stderrPreview: result.stderr.slice(0, 500),
+        });
+        const metadataErrorCode = mapYtDlpError(result.stderr, result.code, attempt.target);
+        lastError = new AppError(metadataErrorCode, 'Metadata attempt failed', { url: attempt.target, stderr: result.stderr, code: result.code });
       }
     }
 
