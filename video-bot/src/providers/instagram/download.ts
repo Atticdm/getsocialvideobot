@@ -89,6 +89,22 @@ function mapYtDlpError(stderr: string, exitCode?: number, url?: string): string 
     return ERROR_CODES.ERR_FETCH_FAILED;
   }
   
+  // Проверка на ошибки с cookies (неправильная кодировка или формат)
+  if (
+    s.includes('utf-8') && s.includes("codec can't decode") ||
+    s.includes('unicodedecodeerror') ||
+    (hasErrorPrefix && s.includes('cookies.py') && s.includes('decode'))
+  ) {
+    logger.warn('mapYtDlpError: Detected cookies encoding error', {
+      url,
+      exitCode,
+      stderrPreview: stderr.slice(0, 500),
+    });
+    // Возвращаем ERR_INTERNAL, но это специфичная ошибка cookies
+    // В будущем можно добавить отдельный код ошибки ERR_INVALID_COOKIES
+    return ERROR_CODES.ERR_INTERNAL;
+  }
+  
   // Проверка на неподдерживаемый URL или отсутствие видео
   const unsupportedPatterns = [
     s.includes('unsupported url'),
@@ -258,11 +274,67 @@ async function prepareInstagramCookies(outDir: string): Promise<string | undefin
   try {
     const buf = Buffer.from(config['INSTAGRAM_COOKIES_B64'], 'base64');
     const cookiesPath = path.join(outDir, 'ig_cookies.txt');
-    await fs.writeFile(cookiesPath, buf);
-    logger.info('Instagram cookies detected');
+    
+    // Пробуем декодировать как UTF-8
+    let cookiesText: string;
+    try {
+      cookiesText = buf.toString('utf-8');
+      // Проверяем, что это валидный UTF-8 и похож на формат cookies
+      if (!cookiesText.includes('\t') && !cookiesText.includes('domain') && !cookiesText.includes('cookie')) {
+        // Возможно, это не текстовый формат, пробуем другие кодировки
+        throw new Error('Does not look like cookies format');
+      }
+    } catch (utf8Error) {
+      // Пробуем другие кодировки
+      try {
+        // Пробуем UTF-16 (может быть BOM)
+        if (buf[0] === 0xFF && buf[1] === 0xFE) {
+          // UTF-16 LE BOM
+          cookiesText = buf.slice(2).toString('utf16le');
+        } else if (buf[0] === 0xFE && buf[1] === 0xFF) {
+          // UTF-16 BE BOM
+          const swapped = Buffer.alloc(buf.length - 2);
+          for (let i = 2; i < buf.length; i += 2) {
+            const byte1 = buf[i + 1];
+            const byte2 = buf[i];
+            if (byte1 !== undefined && byte2 !== undefined) {
+              swapped[i - 2] = byte1;
+              swapped[i - 1] = byte2;
+            }
+          }
+          cookiesText = swapped.toString('utf16le');
+        } else {
+          // Пробуем latin1 (ISO-8859-1) как fallback
+          cookiesText = buf.toString('latin1');
+        }
+        
+        // Проверяем валидность после декодирования
+        if (!cookiesText.includes('\t') && !cookiesText.includes('domain') && !cookiesText.includes('cookie')) {
+          throw new Error('Decoded text does not look like cookies format');
+        }
+      } catch (decodeError) {
+        logger.warn('Failed to decode Instagram cookies - invalid encoding or format', {
+          error: decodeError instanceof Error ? decodeError.message : String(decodeError),
+          utf8Error: utf8Error instanceof Error ? utf8Error.message : String(utf8Error),
+          bufferLength: buf.length,
+          firstBytes: Array.from(buf.slice(0, 10)).map(b => `0x${b.toString(16)}`).join(' '),
+        });
+        return undefined;
+      }
+    }
+    
+    // Записываем как UTF-8 текст
+    await fs.writeFile(cookiesPath, cookiesText, 'utf-8');
+    logger.info('Instagram cookies detected and written successfully', {
+      cookiesLength: cookiesText.length,
+      firstLine: cookiesText.split('\n')[0]?.slice(0, 100),
+    });
     return cookiesPath;
   } catch (error) {
-    logger.warn('Failed to write Instagram cookies, proceeding without', { error });
+    logger.warn('Failed to write Instagram cookies, proceeding without', {
+      error: error instanceof Error ? error.message : String(error),
+      errorStack: error instanceof Error ? error.stack : undefined,
+    });
     return undefined;
   }
 }
