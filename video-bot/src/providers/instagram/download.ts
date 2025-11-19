@@ -138,6 +138,24 @@ function mapYtDlpError(stderr: string, exitCode?: number, url?: string): string 
       return lower.includes('error:') || lower.includes('err:') || lower.includes('fatal:');
     });
     
+    // Логируем прямо в сообщении для видимости в Railway
+    const errorLinesStr = errorLines.join(' | ');
+    const keywordsStr = [
+      s.includes('private') ? 'private' : null,
+      s.includes('login') ? 'login' : null,
+      s.includes('unable') ? 'unable' : null,
+      s.includes('error') ? 'error' : null,
+      s.includes('http') ? 'http' : null,
+      s.includes('blocked') ? 'blocked' : null,
+      s.includes('unavailable') ? 'unavailable' : null,
+      s.includes('not found') ? 'not found' : null,
+      s.includes('failed') ? 'failed' : null,
+      s.includes('timeout') ? 'timeout' : null,
+    ].filter(Boolean).join(', ');
+    
+    logger.error(`mapYtDlpError: Unrecognized yt-dlp error pattern | URL: ${url} | ExitCode: ${exitCode} | stderrLength: ${stderr.length} | Keywords: [${keywordsStr}] | ErrorLines: [${errorLinesStr}] | FullStderr: ${fullStderr}`);
+    
+    // Также логируем как объект для структурированных логов
     logger.error('mapYtDlpError: Unrecognized yt-dlp error pattern', { 
       url,
       exitCode,
@@ -311,6 +329,16 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
       
       // Логируем результат каждой попытки для диагностики
       if (result.code !== 0) {
+        const errorLines = result.stderr.split('\n').filter(line => {
+          const lower = line.toLowerCase();
+          return lower.includes('error:') || lower.includes('err:') || lower.includes('fatal:');
+        });
+        const errorLinesStr = errorLines.join(' | ');
+        
+        // Логируем прямо в сообщении для видимости в Railway
+        logger.warn(`yt-dlp attempt failed (instagram) | Attempt: ${i + 1} | URL: ${a.target} | Code: ${result.code} | Duration: ${result.durationMs}ms | stderrLength: ${result.stderr.length} | stdoutLength: ${result.stdout.length} | ErrorLines: [${errorLinesStr}] | FullStderr: ${result.stderr} | FullStdout: ${result.stdout}`);
+        
+        // Также логируем как объект для структурированных логов
         logger.warn('yt-dlp attempt failed (instagram)', {
           attempt: i + 1,
           target: a.target,
@@ -326,10 +354,7 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
           hasErrorPrefix: result.stderr.toLowerCase().includes('error:') || 
                          result.stderr.toLowerCase().includes('err:') || 
                          result.stderr.toLowerCase().includes('fatal:'),
-          errorLines: result.stderr.split('\n').filter(line => {
-            const lower = line.toLowerCase();
-            return lower.includes('error:') || lower.includes('err:') || lower.includes('fatal:');
-          }),
+          errorLines,
         });
       }
 
@@ -396,6 +421,15 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
     const fullStderr = last?.stderr || '';
     const fullStdout = last?.stdout || '';
     
+    // Логируем stderr прямо в сообщении для видимости в Railway
+    logger.error(`Full yt-dlp stderr (instagram) | URL: ${url} | Length: ${fullStderr.length} | stderr: ${fullStderr}`);
+    
+    // Логируем stdout отдельно
+    if (fullStdout) {
+      logger.error(`Full yt-dlp stdout (instagram) | URL: ${url} | Length: ${fullStdout.length} | stdout: ${fullStdout}`);
+    }
+    
+    // Также логируем как объект для структурированных логов
     logger.error('Full yt-dlp stderr (instagram)', { 
       stderr: fullStderr,
       stderrLength: fullStderr.length,
