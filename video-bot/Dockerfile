@@ -5,8 +5,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates python3 python3-pip ffmpeg libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем yt-dlp
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp
+# Устанавливаем yt-dlp (фиксированная версия 2025.9.5 для совместимости с Instagram)
+# Используем конкретную версию вместо latest, чтобы избежать проблем с требованиями cookies
+# Версия 2025.9.5 работает без cookies для публичных Reels, в отличие от более новых версий (2025.11.12+)
+RUN pip3 install --no-cache-dir --break-system-packages yt-dlp==2025.9.5
 
 # Устанавливаем Python-библиотеки (оставляем только лёгкие зависимости для анализатора)
 # Сначала копируем requirements, чтобы использовать слой кеша

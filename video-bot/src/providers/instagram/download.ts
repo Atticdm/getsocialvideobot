@@ -270,9 +270,37 @@ function createBaseArgs(outDir: string): string[] {
 
 async function prepareInstagramCookies(outDir: string): Promise<string | undefined> {
   const canUseCookies = !!config['INSTAGRAM_COOKIES_B64'] && !config['SKIP_COOKIES'];
-  if (!canUseCookies) return undefined;
+  if (!canUseCookies) {
+    logger.debug('Instagram cookies not available', { 
+      hasCookies: !!config['INSTAGRAM_COOKIES_B64'],
+      skipCookies: !!config['SKIP_COOKIES']
+    });
+    return undefined;
+  }
+  
+  const cookiesB64 = config['INSTAGRAM_COOKIES_B64']?.trim();
+  if (!cookiesB64 || cookiesB64.length === 0) {
+    logger.debug('Instagram cookies B64 is empty, proceeding without cookies');
+    return undefined;
+  }
+  
   try {
-    const buf = Buffer.from(config['INSTAGRAM_COOKIES_B64'], 'base64');
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(cookiesB64, 'base64');
+      // Проверяем, что декодирование прошло успешно (не пустой буфер для непустой строки)
+      if (buf.length === 0 && cookiesB64.length > 0) {
+        throw new Error('Base64 decoding resulted in empty buffer');
+      }
+    } catch (base64Error) {
+      logger.warn('Failed to decode Instagram cookies from base64', {
+        error: base64Error instanceof Error ? base64Error.message : String(base64Error),
+        cookiesB64Length: cookiesB64.length,
+        cookiesB64Preview: cookiesB64.slice(0, 50),
+      });
+      return undefined;
+    }
+    
     const cookiesPath = path.join(outDir, 'ig_cookies.txt');
     
     // Пробуем декодировать как UTF-8
@@ -288,10 +316,10 @@ async function prepareInstagramCookies(outDir: string): Promise<string | undefin
       // Пробуем другие кодировки
       try {
         // Пробуем UTF-16 (может быть BOM)
-        if (buf[0] === 0xFF && buf[1] === 0xFE) {
+        if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) {
           // UTF-16 LE BOM
           cookiesText = buf.slice(2).toString('utf16le');
-        } else if (buf[0] === 0xFE && buf[1] === 0xFF) {
+        } else if (buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF) {
           // UTF-16 BE BOM
           const swapped = Buffer.alloc(buf.length - 2);
           for (let i = 2; i < buf.length; i += 2) {
@@ -383,6 +411,15 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
   const base = createBaseArgs(outDir);
   const cookiesPath = await prepareInstagramCookies(outDir);
   const attempts = buildInstagramAttempts(url, normalizedUrl, cookiesPath);
+  
+  logger.info('Instagram download attempts prepared', {
+    url,
+    normalizedUrl,
+    hasCookies: !!cookiesPath,
+    attemptsCount: attempts.length,
+    attemptsWithoutCookies: attempts.filter(a => !a.useCookies).length,
+    attemptsWithCookies: attempts.filter(a => a.useCookies).length,
+  });
 
   try {
     let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
