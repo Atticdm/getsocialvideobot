@@ -7,6 +7,7 @@ import { ERROR_CODES, AppError } from '../../core/errors';
 import { DownloadResult, VideoMetadata } from '../types';
 import { config } from '../../core/config';
 import { parseVideoInfoFromPath } from '../utils';
+import { getInstagramCookiePool } from './cookie-pool';
 
 function extractReelCode(u: string): string | null {
   try {
@@ -367,22 +368,52 @@ async function prepareInstagramCookies(outDir: string): Promise<string | undefin
   }
 }
 
-function buildInstagramAttempts(url: string, normalizedUrl: string, cookiesPath?: string): Attempt[] {
+type AttemptWithCookie = Attempt & { cookieId?: string; cookiePath?: string };
+
+function buildInstagramAttempts(url: string, normalizedUrl: string, cookiePaths: Array<{ cookieId: string; path: string }>): AttemptWithCookie[] {
   const desktopUA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const mobileUA = 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
   const code = extractReelCode(url) || extractReelCode(normalizedUrl);
   const mobileUrl = code ? `https://m.instagram.com/reel/${code}/` : undefined;
 
-  const attempts: Attempt[] = [];
+  const attempts: AttemptWithCookie[] = [];
+  
+  // Сначала попытки без cookies
   attempts.push({ target: url, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: false });
   attempts.push({ target: normalizedUrl, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: false });
   if (mobileUrl) attempts.push({ target: mobileUrl, referer: 'https://m.instagram.com/', ua: mobileUA, useCookies: false });
-  if (cookiesPath) {
-    attempts.push({ target: url, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: true });
-    attempts.push({ target: normalizedUrl, referer: 'https://www.instagram.com/', ua: desktopUA, useCookies: true });
-    if (mobileUrl) attempts.push({ target: mobileUrl, referer: 'https://m.instagram.com/', ua: mobileUA, useCookies: true });
+  
+  // Затем попытки с каждой доступной cookie (ротация)
+  for (const { cookieId, path } of cookiePaths) {
+    attempts.push({ 
+      target: url, 
+      referer: 'https://www.instagram.com/', 
+      ua: desktopUA, 
+      useCookies: true,
+      cookieId,
+      cookiePath: path,
+    });
+    attempts.push({ 
+      target: normalizedUrl, 
+      referer: 'https://www.instagram.com/', 
+      ua: desktopUA, 
+      useCookies: true,
+      cookieId,
+      cookiePath: path,
+    });
+    if (mobileUrl) {
+      attempts.push({ 
+        target: mobileUrl, 
+        referer: 'https://m.instagram.com/', 
+        ua: mobileUA, 
+        useCookies: true,
+        cookieId,
+        cookiePath: path,
+      });
+    }
   }
+  
   return attempts;
 }
 
@@ -409,13 +440,42 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
   }
 
   const base = createBaseArgs(outDir);
-  const cookiesPath = await prepareInstagramCookies(outDir);
-  const attempts = buildInstagramAttempts(url, normalizedUrl, cookiesPath);
+  
+  // Используем cookie pool для ротации множественных cookies
+  const cookiePool = getInstagramCookiePool();
+  const cookiePoolStats = cookiePool.getStats();
+  
+  // Подготавливаем файлы cookies из пула
+  const cookiePaths: Array<{ cookieId: string; path: string }> = [];
+  if (cookiePoolStats.available > 0) {
+    // Берем несколько cookies из пула для ротации (максимум 3 для одной попытки скачивания)
+    const cookiesToUse = Math.min(3, cookiePoolStats.available);
+    for (let i = 0; i < cookiesToUse; i++) {
+      const cookie = cookiePool.getNextCookie();
+      if (cookie) {
+        const cookiePath = await cookiePool.prepareCookieFile(cookie, outDir);
+        if (cookiePath) {
+          cookiePaths.push({ cookieId: cookie.id, path: cookiePath });
+        }
+      }
+    }
+  }
+  
+  // Fallback на старый формат (одна cookie) для обратной совместимости
+  if (cookiePaths.length === 0) {
+    const legacyCookiesPath = await prepareInstagramCookies(outDir);
+    if (legacyCookiesPath) {
+      cookiePaths.push({ cookieId: 'legacy', path: legacyCookiesPath });
+    }
+  }
+  
+  const attempts = buildInstagramAttempts(url, normalizedUrl, cookiePaths);
   
   logger.info('Instagram download attempts prepared', {
     url,
     normalizedUrl,
-    hasCookies: !!cookiesPath,
+    cookiePoolStats,
+    cookiesPrepared: cookiePaths.length,
     attemptsCount: attempts.length,
     attemptsWithoutCookies: attempts.filter(a => !a.useCookies).length,
     attemptsWithCookies: attempts.filter(a => a.useCookies).length,
@@ -423,12 +483,22 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
 
   try {
     let last: { code: number; stdout: string; stderr: string; durationMs: number } | null = null;
+    let lastCookieId: string | undefined;
     for (let i = 0; i < attempts.length; i++) {
       const a = attempts[i]!;
       const args = [...base, '--add-header', `Referer:${a.referer}`, '--user-agent', a.ua];
-      if (a.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
+      if (a.useCookies && a.cookiePath) {
+        args.push('--cookies', a.cookiePath);
+        lastCookieId = a.cookieId;
+      }
       args.push(a.target);
-      logger.info('yt-dlp attempt (instagram)', { attempt: i + 1, target: a.target, cookies: a.useCookies && !!cookiesPath, ua: a.ua.includes('Android') ? 'android' : 'desktop' });
+      logger.info('yt-dlp attempt (instagram)', { 
+        attempt: i + 1, 
+        target: a.target, 
+        cookies: a.useCookies && !!a.cookiePath, 
+        cookieId: a.cookieId,
+        ua: a.ua.includes('Android') ? 'android' : 'desktop' 
+      });
       if (config.DEBUG_YTDLP || config.LOG_LEVEL === 'debug') {
         logger.debug('yt-dlp args (instagram)', { args });
       }
@@ -470,8 +540,19 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
       if (result.code === 0) {
         const filePath = await findDownloadedFile(outDir);
         if (filePath) {
-        const videoInfo = await parseVideoInfoFromPath(filePath, a.target);
-          logger.info('Instagram video downloaded successfully', { url: a.target, filePath, videoInfo, exitCode: result.code });
+          // Отмечаем успех в cookie pool
+          if (lastCookieId) {
+            cookiePool.markSuccess(lastCookieId);
+          }
+          
+          const videoInfo = await parseVideoInfoFromPath(filePath, a.target);
+          logger.info('Instagram video downloaded successfully', { 
+            url: a.target, 
+            filePath, 
+            videoInfo, 
+            exitCode: result.code,
+            cookieId: lastCookieId,
+          });
           return { filePath, videoInfo };
         }
 
@@ -596,12 +677,19 @@ export async function downloadInstagramVideo(url: string, outDir: string): Promi
     
     const errorCode = mapYtDlpError(last?.stderr || '', last?.code, url);
     
+    // Отмечаем неудачу в cookie pool, если использовалась cookie
+    if (lastCookieId && errorCode === ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED) {
+      cookiePool.markFailure(lastCookieId, errorCode);
+    }
+    
     logger.error('Error code mapped', {
       url,
       normalizedUrl,
       errorCode,
       exitCode: last?.code,
       stderrLength: last?.stderr?.length || 0,
+      cookieId: lastCookieId,
+      cookiePoolStats: cookiePool.getStats(),
     });
     
     throw new AppError(errorCode, 'yt-dlp download failed', { url, stderr: last?.stderr, stdout: last?.stdout, code: last?.code });
@@ -617,14 +705,40 @@ export async function fetchInstagramMetadata(url: string): Promise<VideoMetadata
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ig-meta-'));
   try {
     const normalizedUrl = normalizeReelUrl(url);
-    const cookiesPath = await prepareInstagramCookies(tempDir);
-    const attempts = buildInstagramAttempts(url, normalizedUrl, cookiesPath);
+    
+    // Используем cookie pool для метаданных тоже
+    const cookiePool = getInstagramCookiePool();
+    const cookiePaths: Array<{ cookieId: string; path: string }> = [];
+    
+    if (cookiePool.getStats().available > 0) {
+      const cookie = cookiePool.getNextCookie();
+      if (cookie) {
+        const cookiePath = await cookiePool.prepareCookieFile(cookie, tempDir);
+        if (cookiePath) {
+          cookiePaths.push({ cookieId: cookie.id, path: cookiePath });
+        }
+      }
+    }
+    
+    // Fallback на старый формат
+    if (cookiePaths.length === 0) {
+      const legacyCookiesPath = await prepareInstagramCookies(tempDir);
+      if (legacyCookiesPath) {
+        cookiePaths.push({ cookieId: 'legacy', path: legacyCookiesPath });
+      }
+    }
+    
+    const attempts = buildInstagramAttempts(url, normalizedUrl, cookiePaths);
     const base = createBaseArgs(tempDir);
 
     let lastError: AppError | Error | null = null;
+    let lastCookieId: string | undefined;
     for (const attempt of attempts) {
       const args = [...base, '--dump-single-json', '--skip-download', '--add-header', `Referer:${attempt.referer}`, '--user-agent', attempt.ua];
-      if (attempt.useCookies && cookiesPath) args.push('--cookies', cookiesPath);
+      if (attempt.useCookies && attempt.cookiePath) {
+        args.push('--cookies', attempt.cookiePath);
+        lastCookieId = attempt.cookieId;
+      }
       args.push(attempt.target);
 
       const result = await run('yt-dlp', args, { timeout: 240000 });
@@ -633,6 +747,12 @@ export async function fetchInstagramMetadata(url: string): Promise<VideoMetadata
           const parsed = JSON.parse(result.stdout || '{}');
           const metadata = extractMetadata(parsed, attempt.target);
           if (!metadata.downloadUrl) throw new Error('downloadUrl missing');
+          
+          // Отмечаем успех в cookie pool
+          if (lastCookieId) {
+            cookiePool.markSuccess(lastCookieId);
+          }
+          
           return metadata;
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error));
@@ -644,8 +764,15 @@ export async function fetchInstagramMetadata(url: string): Promise<VideoMetadata
           exitCode: result.code,
           stderrLength: result.stderr.length,
           stderrPreview: result.stderr.slice(0, 500),
+          cookieId: lastCookieId,
         });
         const metadataErrorCode = mapYtDlpError(result.stderr, result.code, attempt.target);
+        
+        // Отмечаем неудачу в cookie pool
+        if (lastCookieId && metadataErrorCode === ERROR_CODES.ERR_PRIVATE_OR_RESTRICTED) {
+          cookiePool.markFailure(lastCookieId, metadataErrorCode);
+        }
+        
         lastError = new AppError(metadataErrorCode, 'Metadata attempt failed', { url: attempt.target, stderr: result.stderr, code: result.code });
       }
     }

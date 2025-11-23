@@ -36,8 +36,11 @@ const configSchema = z.object({
   POSTHOG_HOST: z.string().optional().default('https://us.i.posthog.com'),
   // Optional: base64-encoded Netscape cookies.txt for Facebook
   FACEBOOK_COOKIES_B64: z.string().optional().default(''),
-  // Optional: base64-encoded Netscape cookies.txt for Instagram
+  // Optional: base64-encoded Netscape cookies.txt for Instagram (legacy, single cookie)
   INSTAGRAM_COOKIES_B64: z.string().optional().default(''),
+  // Optional: base64-encoded JSON array of cookies for Instagram (cookie pool for rotation)
+  // Format: base64([{"id": "cookie1", "cookiesB64": "base64..."}, ...])
+  INSTAGRAM_COOKIES_POOL_B64: z.string().optional().default(''),
   LINKEDIN_COOKIES_B64: z.string().optional().default(''),
   YOUTUBE_COOKIES_B64: z.string().optional().default(''),
   YOUTUBE_GEO_COUNTRIES: z.string().optional().default(''),
