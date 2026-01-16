@@ -49,6 +49,22 @@ export async function helpCommand(ctx: Context): Promise<void> {
     trackUserEvent('command.help.error', ctx.from?.id, {
       error: error instanceof Error ? error.message : String(error),
     });
-    await ctx.reply('Sorry, something went wrong. Please try again.');
+    
+    // Проверяем, является ли ошибка ошибкой 403 "bot was blocked by the user"
+    const isBlockedError = error && typeof error === 'object' && 'response' in error && 
+      typeof (error as any).response === 'object' &&
+      (error as any).response?.error_code === 403 &&
+      typeof (error as any).response?.description === 'string' &&
+      (error as any).response.description.includes('bot was blocked by the user');
+
+    if (!isBlockedError) {
+      try {
+        await ctx.reply('Sorry, something went wrong. Please try again.');
+      } catch (replyError) {
+        logger.error({ error: replyError, originalError: error, userId: ctx.from?.id }, 'Failed to send error message in help command');
+      }
+    } else {
+      logger.warn({ userId: ctx.from?.id }, 'User blocked the bot, skipping error message in help command');
+    }
   }
 }

@@ -61,6 +61,22 @@ export async function diagCommand(ctx: Context): Promise<void> {
       provider,
       error: e instanceof Error ? e.message : String(e),
     });
-    await ctx.reply('❌ Diag failed');
+    
+    // Проверяем, является ли ошибка ошибкой 403 "bot was blocked by the user"
+    const isBlockedError = e && typeof e === 'object' && 'response' in e && 
+      typeof (e as any).response === 'object' &&
+      (e as any).response?.error_code === 403 &&
+      typeof (e as any).response?.description === 'string' &&
+      (e as any).response.description.includes('bot was blocked by the user');
+
+    if (!isBlockedError) {
+      try {
+        await ctx.reply('❌ Diag failed');
+      } catch (replyError) {
+        logger.error({ error: replyError, originalError: e, userId: ctx.from?.id }, 'Failed to send error message in diag command');
+      }
+    } else {
+      logger.warn({ userId: ctx.from?.id }, 'User blocked the bot, skipping error message in diag command');
+    }
   }
 }

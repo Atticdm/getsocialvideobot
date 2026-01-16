@@ -47,7 +47,23 @@ export async function creditsCommand(ctx: Context): Promise<void> {
     trackUserEvent('command.credits', userId, { username });
   } catch (error: unknown) {
     logger.error({ error, userId }, 'Failed to execute credits command');
-    await ctx.reply('❌ Ошибка загрузки баланса. Попробуйте позже.');
+    
+    // Проверяем, является ли ошибка ошибкой 403 "bot was blocked by the user"
+    const isBlockedError = error && typeof error === 'object' && 'response' in error && 
+      typeof (error as any).response === 'object' &&
+      (error as any).response?.error_code === 403 &&
+      typeof (error as any).response?.description === 'string' &&
+      (error as any).response.description.includes('bot was blocked by the user');
+
+    if (!isBlockedError) {
+      try {
+        await ctx.reply('❌ Ошибка загрузки баланса. Попробуйте позже.');
+      } catch (replyError) {
+        logger.error({ error: replyError, originalError: error, userId }, 'Failed to send error message in credits command');
+      }
+    } else {
+      logger.warn({ userId }, 'User blocked the bot, skipping error message in credits command');
+    }
   }
 }
 
@@ -104,7 +120,23 @@ export async function buyCommand(ctx: Context): Promise<void> {
     trackUserEvent('command.buy', userId, { username });
   } catch (error: unknown) {
     logger.error({ error, userId }, 'Failed to execute buy command');
-    await ctx.reply('❌ Ошибка создания платежа. Попробуйте позже.');
+    
+    // Проверяем, является ли ошибка ошибкой 403 "bot was blocked by the user"
+    const isBlockedError = error && typeof error === 'object' && 'response' in error && 
+      typeof (error as any).response === 'object' &&
+      (error as any).response?.error_code === 403 &&
+      typeof (error as any).response?.description === 'string' &&
+      (error as any).response.description.includes('bot was blocked by the user');
+
+    if (!isBlockedError) {
+      try {
+        await ctx.reply('❌ Ошибка создания платежа. Попробуйте позже.');
+      } catch (replyError) {
+        logger.error({ error: replyError, originalError: error, userId }, 'Failed to send error message in buy command');
+      }
+    } else {
+      logger.warn({ userId }, 'User blocked the bot, skipping error message in buy command');
+    }
   }
 }
 

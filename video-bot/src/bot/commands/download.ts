@@ -565,7 +565,22 @@ export async function downloadCommand(ctx: Context): Promise<void> {
       errorMessage = '❌ Download failed: Unknown error';
     }
 
-    await ctx.reply(errorMessage);
+    // Проверяем, является ли ошибка ошибкой 403 "bot was blocked by the user"
+    const isBlockedError = error && typeof error === 'object' && 'response' in error && 
+      typeof (error as any).response === 'object' &&
+      (error as any).response?.error_code === 403 &&
+      typeof (error as any).response?.description === 'string' &&
+      (error as any).response.description.includes('bot was blocked by the user');
+
+    if (!isBlockedError) {
+      try {
+        await ctx.reply(errorMessage);
+      } catch (replyError) {
+        logger.error({ error: replyError, originalError: error, userId }, 'Failed to send error message in download command');
+      }
+    } else {
+      logger.warn({ userId }, 'User blocked the bot, skipping error message in download command');
+    }
   } finally {
     // Release rate limit slot
     release();

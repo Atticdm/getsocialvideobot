@@ -59,7 +59,23 @@ export async function promoCommand(ctx: Context): Promise<void> {
     }
   } catch (error: unknown) {
     logger.error({ error, userId, promoCode }, 'Failed to activate promo code');
-    await ctx.reply('❌ Произошла ошибка при активации промокода. Попробуйте позже или обратитесь в поддержку (/support).');
+    
+    // Проверяем, является ли ошибка ошибкой 403 "bot was blocked by the user"
+    const isBlockedError = error && typeof error === 'object' && 'response' in error && 
+      typeof (error as any).response === 'object' &&
+      (error as any).response?.error_code === 403 &&
+      typeof (error as any).response?.description === 'string' &&
+      (error as any).response.description.includes('bot was blocked by the user');
+
+    if (!isBlockedError) {
+      try {
+        await ctx.reply('❌ Произошла ошибка при активации промокода. Попробуйте позже или обратитесь в поддержку (/support).');
+      } catch (replyError) {
+        logger.error({ error: replyError, originalError: error, userId }, 'Failed to send error message in promo command');
+      }
+    } else {
+      logger.warn({ userId }, 'User blocked the bot, skipping error message in promo command');
+    }
   }
 }
 

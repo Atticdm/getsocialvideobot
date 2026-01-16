@@ -867,7 +867,7 @@ export async function setupBot(): Promise<void> {
     }
   });
 
-  bot.catch((err, ctx) => {
+  bot.catch(async (err, ctx) => {
     logger.error(
       {
         error: err,
@@ -885,7 +885,27 @@ export async function setupBot(): Promise<void> {
       command: commandToken,
     });
 
-    ctx.reply('Sorry, something went wrong. Please try again.');
+    // Проверяем, является ли ошибка ошибкой 403 "bot was blocked by the user"
+    const isBlockedError = err && typeof err === 'object' && 'response' in err && 
+      typeof (err as any).response === 'object' &&
+      (err as any).response?.error_code === 403 &&
+      typeof (err as any).response?.description === 'string' &&
+      (err as any).response.description.includes('bot was blocked by the user');
+
+    if (isBlockedError) {
+      // Если пользователь заблокировал бота, не пытаемся отправлять сообщение
+      logger.warn({ userId: ctx.from?.id }, 'User blocked the bot, skipping error message');
+      return;
+    }
+
+    // Пытаемся отправить сообщение об ошибке, но обрабатываем возможные ошибки
+    try {
+      await ctx.reply('Sorry, something went wrong. Please try again.');
+    } catch (replyError) {
+      // Если не удалось отправить сообщение (например, пользователь заблокировал бота),
+      // логируем, но не пробрасываем ошибку дальше, чтобы не упал процесс
+      logger.error({ error: replyError, originalError: err, userId: ctx.from?.id }, 'Failed to send error message in bot.catch');
+    }
   });
 }
 
